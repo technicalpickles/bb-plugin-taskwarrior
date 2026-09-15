@@ -5,7 +5,7 @@
 // task navigates to subPath "<id>" for a detail view. Both share one
 // `filter` state (project/tag chips), kept in memory only — it resets when
 // you leave the panel, same as most ad hoc list filters.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   definePluginApp,
   useRpc,
@@ -95,6 +95,82 @@ function TaskMeta({
       ))}
       {task.due !== undefined && <span>due {task.due}</span>}
     </p>
+  );
+}
+
+/** "…" menu: Complete/Delete stay out of the way until asked for, and
+ * Delete always confirms — there's no undo for a Taskwarrior delete. */
+function RowActions({
+  taskId,
+  description,
+  busy,
+  onComplete,
+  onDelete,
+}: {
+  taskId: number;
+  description: string;
+  busy: boolean;
+  onComplete: () => void;
+  onDelete: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handlePointerDown(event: MouseEvent) {
+      if (ref.current !== null && !ref.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [open]);
+
+  function handleDeleteClick() {
+    setOpen(false);
+    if (window.confirm(`Delete task #${taskId}: "${description}"? This can't be undone.`)) {
+      onDelete();
+    }
+  }
+
+  return (
+    <div
+      ref={ref}
+      className="relative shrink-0"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <button
+        type="button"
+        aria-label={`Actions for task ${taskId}`}
+        onClick={() => setOpen((value) => !value)}
+        disabled={busy}
+        className="rounded-md px-1.5 py-1 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+      >
+        ⋯
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-10 mt-1 w-32 rounded-md border border-border bg-card py-1 text-xs shadow-md">
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(false);
+              onComplete();
+            }}
+            className="block w-full px-3 py-1.5 text-left text-foreground hover:bg-accent"
+          >
+            Complete
+          </button>
+          <button
+            type="button"
+            onClick={handleDeleteClick}
+            className="block w-full px-3 py-1.5 text-left text-destructive hover:bg-accent"
+          >
+            Delete
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -200,32 +276,17 @@ function TaskList({
               onClick={() => navigate.toPluginPanel("tasks", { subPath: String(task.id) })}
               className="flex cursor-pointer items-center gap-3 px-3 py-2 text-sm hover:bg-accent/50"
             >
-              <button
-                type="button"
-                aria-label={`Complete task ${task.id}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  handleComplete(task.id);
-                }}
-                disabled={busyId === task.id}
-                className="h-4 w-4 shrink-0 rounded-sm border border-border disabled:opacity-50"
-              />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-foreground">{task.description}</p>
                 <TaskMeta task={task} onFilter={onFilter} />
               </div>
-              <button
-                type="button"
-                aria-label={`Delete task ${task.id}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  handleDelete(task.id);
-                }}
-                disabled={busyId === task.id}
-                className="shrink-0 text-xs text-muted-foreground hover:text-destructive disabled:opacity-50"
-              >
-                Delete
-              </button>
+              <RowActions
+                taskId={task.id}
+                description={task.description}
+                busy={busyId === task.id}
+                onComplete={() => handleComplete(task.id)}
+                onDelete={() => handleDelete(task.id)}
+              />
             </li>
           ))}
         </ul>
@@ -283,6 +344,10 @@ function TaskDetail({
   }
 
   async function handleDelete() {
+    if (task === null || task === undefined) return;
+    if (!window.confirm(`Delete task #${id}: "${task.description}"? This can't be undone.`)) {
+      return;
+    }
     setBusy(true);
     try {
       const { ok } = await rpc.call("tasks_delete", { id });
