@@ -67,25 +67,43 @@ function PageScroll({ children }: { children: React.ReactNode }) {
   );
 }
 
-type SortField = "description" | "entry" | "modified" | "due" | "urgency";
+const DATE_FIELDS = ["due", "entry", "modified"] as const;
+const STRING_FIELDS = ["description", "status", "project", "priority", "tags"] as const;
+type DateSortField = (typeof DATE_FIELDS)[number];
+type StringSortField = (typeof STRING_FIELDS)[number];
+type SortField = DateSortField | StringSortField | "urgency";
 type Sort = { field: SortField; direction: "asc" | "desc" };
 
 const SORT_FIELD_LABELS: Record<SortField, string> = {
   urgency: "Urgency",
   description: "Name",
+  status: "Status",
+  project: "Project",
+  priority: "Priority",
+  tags: "Tags",
   due: "Due date",
   entry: "Created",
   modified: "Updated",
 };
 
+function stringSortValue(task: TaskRecord, field: StringSortField): string {
+  if (field === "tags") return (task.tags ?? []).slice().sort().join(",");
+  return task[field] ?? "";
+}
+
 function compareTasks(a: TaskRecord, b: TaskRecord, field: SortField): number {
-  if (field === "description") return a.description.localeCompare(b.description);
   if (field === "urgency") return (a.urgency ?? 0) - (b.urgency ?? 0);
-  const aValue = a[field];
-  const bValue = b[field];
-  const aTime = aValue !== undefined ? (parseTaskwarriorDate(aValue)?.getTime() ?? 0) : 0;
-  const bTime = bValue !== undefined ? (parseTaskwarriorDate(bValue)?.getTime() ?? 0) : 0;
-  return aTime - bTime;
+  if ((DATE_FIELDS as readonly string[]).includes(field)) {
+    const dateField = field as DateSortField;
+    const aValue = a[dateField];
+    const bValue = b[dateField];
+    const aTime = aValue !== undefined ? (parseTaskwarriorDate(aValue)?.getTime() ?? 0) : 0;
+    const bTime = bValue !== undefined ? (parseTaskwarriorDate(bValue)?.getTime() ?? 0) : 0;
+    return aTime - bTime;
+  }
+  return stringSortValue(a, field as StringSortField).localeCompare(
+    stringSortValue(b, field as StringSortField),
+  );
 }
 
 function sortTasks(tasks: TaskRecord[], sort: Sort): TaskRecord[] {
