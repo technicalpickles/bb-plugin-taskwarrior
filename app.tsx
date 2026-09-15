@@ -5,7 +5,7 @@
 // task navigates to subPath "<id>" for a detail view. Both share one
 // `filter` state (project/tag chips), kept in memory only — it resets when
 // you leave the panel, same as most ad hoc list filters.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   definePluginApp,
   useRpc,
@@ -50,11 +50,84 @@ function formatTaskwarriorDate(value: string): string {
 }
 
 /** e.g. "in 3 days" / "2 months ago" — only meaningful for near-ish dates. */
-function formatRelativeDays(value: string): string | null {
+function formatRelative(value: string): string | null {
   const date = parseTaskwarriorDate(value);
   if (date === null) return null;
   const diffDays = Math.round((date.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
   return RELATIVE.format(diffDays, "day");
+}
+
+/** The nav panel page owns its full body with zero host padding/scrolling —
+ * per the plugin SDK's "classic page" recipe, supply both ourselves. */
+function PageScroll({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-5">{children}</div>
+    </div>
+  );
+}
+
+type SortField = "description" | "entry" | "modified" | "due" | "urgency";
+type Sort = { field: SortField; direction: "asc" | "desc" };
+
+const SORT_FIELD_LABELS: Record<SortField, string> = {
+  urgency: "Urgency",
+  description: "Name",
+  due: "Due date",
+  entry: "Created",
+  modified: "Updated",
+};
+
+function compareTasks(a: TaskRecord, b: TaskRecord, field: SortField): number {
+  if (field === "description") return a.description.localeCompare(b.description);
+  if (field === "urgency") return (a.urgency ?? 0) - (b.urgency ?? 0);
+  const aValue = a[field];
+  const bValue = b[field];
+  const aTime = aValue !== undefined ? (parseTaskwarriorDate(aValue)?.getTime() ?? 0) : 0;
+  const bTime = bValue !== undefined ? (parseTaskwarriorDate(bValue)?.getTime() ?? 0) : 0;
+  return aTime - bTime;
+}
+
+function sortTasks(tasks: TaskRecord[], sort: Sort): TaskRecord[] {
+  const factor = sort.direction === "asc" ? 1 : -1;
+  return [...tasks].sort((a, b) => factor * compareTasks(a, b, sort.field));
+}
+
+function SortControl({
+  sort,
+  setSort,
+}: {
+  sort: Sort;
+  setSort: (next: Sort) => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <span>Sort:</span>
+      <select
+        value={sort.field}
+        onChange={(event) =>
+          setSort({ ...sort, field: event.target.value as SortField })
+        }
+        className="rounded-md border border-border bg-card px-2 py-1 text-foreground"
+      >
+        {(Object.keys(SORT_FIELD_LABELS) as SortField[]).map((field) => (
+          <option key={field} value={field}>
+            {SORT_FIELD_LABELS[field]}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        onClick={() =>
+          setSort({ ...sort, direction: sort.direction === "asc" ? "desc" : "asc" })
+        }
+        aria-label={sort.direction === "asc" ? "Sort ascending" : "Sort descending"}
+        className="rounded-md border border-border px-2 py-1 text-foreground hover:bg-accent"
+      >
+        {sort.direction === "asc" ? "↑ Asc" : "↓ Desc"}
+      </button>
+    </div>
+  );
 }
 
 function toggleFilter(filter: string[], token: string): string[] {
@@ -138,8 +211,12 @@ function TaskMeta({
       {task.due !== undefined && (
         <span>
           due {formatTaskwarriorDate(task.due)}
-          {formatRelativeDays(task.due) !== null && ` (${formatRelativeDays(task.due)})`}
+          {formatRelative(task.due) !== null && ` (${formatRelative(task.due)})`}
         </span>
+      )}
+      {task.entry !== undefined && <span>created {formatRelative(task.entry) ?? task.entry}</span>}
+      {task.modified !== undefined && task.modified !== task.entry && (
+        <span>updated {formatRelative(task.modified) ?? task.modified}</span>
       )}
     </p>
   );
@@ -234,6 +311,11 @@ function TaskList({
   const [draft, setDraft] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
+  const [sort, setSort] = useState<Sort>({ field: "urgency", direction: "desc" });
+  const sortedTasks = useMemo(
+    () => (tasks === null ? null : sortTasks(tasks, sort)),
+    [tasks, sort],
+  );
 
   async function refresh() {
     const { tasks: next } = await rpc.call("tasks_list", { filter });
@@ -291,7 +373,7 @@ function TaskList({
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-5">
+    <PageScroll>
       <form onSubmit={handleAdd} className="flex gap-2">
         <input
           className="flex-1 rounded-md border border-border bg-card px-3 py-1.5 text-sm text-foreground outline-none focus:ring-1 focus:ring-ring"
@@ -309,15 +391,18 @@ function TaskList({
         </button>
       </form>
 
-      <FilterChips filter={filter} onClear={() => setFilter([])} onRemove={onFilter} />
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <FilterChips filter={filter} onClear={() => setFilter([])} onRemove={onFilter} />
+        <SortControl sort={sort} setSort={setSort} />
+      </div>
 
-      {tasks === null ? (
+      {sortedTasks === null ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
-      ) : tasks.length === 0 ? (
+      ) : sortedTasks.length === 0 ? (
         <p className="text-sm text-muted-foreground">No matching tasks.</p>
       ) : (
         <ul className="divide-y divide-border rounded-md border border-border">
-          {tasks.map((task) => (
+          {sortedTasks.map((task) => (
             <li
               key={task.uuid}
               onClick={() => navigate.toPluginPanel("tasks", { subPath: String(task.id) })}
@@ -338,7 +423,7 @@ function TaskList({
           ))}
         </ul>
       )}
-    </div>
+    </PageScroll>
   );
 }
 
@@ -406,7 +491,7 @@ function TaskDetail({
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl space-y-4 p-4 md:p-5">
+    <PageScroll>
       <button
         type="button"
         onClick={backToList}
@@ -492,7 +577,7 @@ function TaskDetail({
           </div>
         </div>
       )}
-    </div>
+    </PageScroll>
   );
 }
 

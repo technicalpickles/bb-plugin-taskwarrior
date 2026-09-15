@@ -114,9 +114,10 @@ export default async function plugin(bb: BbPluginApi) {
     }
   }
 
+  // Sorting is client-side (the panel offers several sort fields); this just
+  // applies the pending-status + user filter.
   async function listPendingTasks(filter: string[]): Promise<TaskRecord[]> {
-    const tasks = await exportTasks(["status:pending", ...filter]);
-    return tasks.sort((a, b) => (b.urgency ?? 0) - (a.urgency ?? 0));
+    return exportTasks(["status:pending", ...filter]);
   }
 
   bb.rpc.register(rpcContract, {
