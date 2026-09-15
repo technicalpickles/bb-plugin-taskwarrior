@@ -15,6 +15,48 @@ import {
 import { toast } from "sonner";
 import { rpcContract, TASKS_CHANGED, type TaskRecord } from "./contract";
 
+// Taskwarrior exports dates as compact UTC basic-ISO-8601:
+// "20260415T000000Z". Parse that, then render with the viewer's own locale
+// and timezone instead of the raw wire format.
+const DATE_ONLY = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
+const DATE_AND_TIME = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+const RELATIVE = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+
+function parseTaskwarriorDate(value: string): Date | null {
+  const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(value);
+  if (match === null) return null;
+  const [, year, month, day, hour, minute, second] = match;
+  return new Date(
+    Date.UTC(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      Number(hour),
+      Number(minute),
+      Number(second),
+    ),
+  );
+}
+
+function formatTaskwarriorDate(value: string): string {
+  const date = parseTaskwarriorDate(value);
+  if (date === null) return value;
+  const atMidnightUtc =
+    date.getUTCHours() === 0 && date.getUTCMinutes() === 0 && date.getUTCSeconds() === 0;
+  return (atMidnightUtc ? DATE_ONLY : DATE_AND_TIME).format(date);
+}
+
+/** e.g. "in 3 days" / "2 months ago" — only meaningful for near-ish dates. */
+function formatRelativeDays(value: string): string | null {
+  const date = parseTaskwarriorDate(value);
+  if (date === null) return null;
+  const diffDays = Math.round((date.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+  return RELATIVE.format(diffDays, "day");
+}
+
 function toggleFilter(filter: string[], token: string): string[] {
   if (filter.includes(token)) return filter.filter((existing) => existing !== token);
   if (token.startsWith("project:")) {
@@ -93,7 +135,12 @@ function TaskMeta({
           +{tag}
         </button>
       ))}
-      {task.due !== undefined && <span>due {task.due}</span>}
+      {task.due !== undefined && (
+        <span>
+          due {formatTaskwarriorDate(task.due)}
+          {formatRelativeDays(task.due) !== null && ` (${formatRelativeDays(task.due)})`}
+        </span>
+      )}
     </p>
   );
 }
@@ -397,13 +444,13 @@ function TaskDetail({
             {task.entry !== undefined && (
               <>
                 <dt className="text-muted-foreground">Created</dt>
-                <dd className="text-foreground">{task.entry}</dd>
+                <dd className="text-foreground">{formatTaskwarriorDate(task.entry)}</dd>
               </>
             )}
             {task.modified !== undefined && (
               <>
                 <dt className="text-muted-foreground">Modified</dt>
-                <dd className="text-foreground">{task.modified}</dd>
+                <dd className="text-foreground">{formatTaskwarriorDate(task.modified)}</dd>
               </>
             )}
             <dt className="text-muted-foreground">UUID</dt>
@@ -418,7 +465,7 @@ function TaskDetail({
               <ul className="space-y-0.5 text-xs text-foreground">
                 {task.annotations.map((annotation) => (
                   <li key={annotation.entry}>
-                    {annotation.entry}: {annotation.description}
+                    {formatTaskwarriorDate(annotation.entry)}: {annotation.description}
                   </li>
                 ))}
               </ul>
