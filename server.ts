@@ -114,13 +114,14 @@ export default async function plugin(bb: BbPluginApi) {
     }
   }
 
-  async function listPendingTasks(): Promise<TaskRecord[]> {
-    const tasks = await exportTasks(["status:pending"]);
+  async function listPendingTasks(filter: string[]): Promise<TaskRecord[]> {
+    const tasks = await exportTasks(["status:pending", ...filter]);
     return tasks.sort((a, b) => (b.urgency ?? 0) - (a.urgency ?? 0));
   }
 
   bb.rpc.register(rpcContract, {
-    tasks_list: async () => ({ tasks: await listPendingTasks() }),
+    tasks_list: async ({ filter }) => ({ tasks: await listPendingTasks(filter) }),
+    tasks_get: async ({ id }) => ({ task: (await exportTasks([String(id)]))[0] ?? null }),
     tasks_add: async ({ description }) => {
       const result = await runTask(["add", description]);
       if (result.exitCode !== 0) {
