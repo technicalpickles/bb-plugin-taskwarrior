@@ -114,15 +114,36 @@ export default async function plugin(bb: BbPluginApi) {
     }
   }
 
-  // Sorting is client-side (the panel offers several sort fields); this just
-  // applies the pending-status + user filter.
-  async function listPendingTasks(filter: string[]): Promise<TaskRecord[]> {
-    return exportTasks(["status:pending", ...filter]);
+  // A blocker may not be in the caller's current filter/list, so it's
+  // resolved with its own `task export` lookup rather than cross-referencing
+  // the batch already in hand.
+  async function attachBlockedBy(tasks: TaskRecord[]): Promise<TaskRecord[]> {
+    const blockerUuids = new Set<string>();
+    for (const task of tasks) {
+      for (const uuid of task.depends ?? []) blockerUuids.add(uuid);
+    }
+    if (blockerUuids.size === 0) return tasks;
+
+    const blockers = await exportTasks([...blockerUuids]);
+    const blockerByUuid = new Map(blockers.map((blocker) => [blocker.uuid, blocker]));
+
+    return tasks.map((task) => {
+      if (task.depends === undefined || task.depends.length === 0) return task;
+      const blockedBy = task.depends
+        .map((uuid) => blockerByUuid.get(uuid))
+        .filter((blocker): blocker is TaskRecord => blocker !== undefined)
+        .filter((blocker) => blocker.status !== "completed" && blocker.status !== "deleted")
+        .map((blocker) => ({ id: blocker.id, description: blocker.description }));
+      return blockedBy.length > 0 ? { ...task, blockedBy } : task;
+    });
   }
 
   bb.rpc.register(rpcContract, {
-    tasks_list: async ({ filter }) => ({ tasks: await listPendingTasks(filter) }),
-    tasks_get: async ({ id }) => ({ task: (await exportTasks([String(id)]))[0] ?? null }),
+    tasks_list: async ({ filter }) => ({ tasks: await attachBlockedBy(await exportTasks(filter)) }),
+    tasks_get: async ({ id }) => {
+      const [task] = await attachBlockedBy(await exportTasks([String(id)]));
+      return { task: task ?? null };
+    },
     tasks_add: async ({ description }) => {
       const result = await runTask(["add", description]);
       if (result.exitCode !== 0) {
@@ -133,6 +154,32 @@ export default async function plugin(bb: BbPluginApi) {
         match !== null ? (await exportTasks([match[1]]))[0] ?? null : null;
       bb.realtime.publish(TASKS_CHANGED, { reason: "add" });
       return { task };
+    },
+    tasks_modify: async ({ id, priority, project, tags, due }) => {
+      const args = [String(id), "modify"];
+      if (priority !== undefined) args.push(priority === null ? "priority:" : `priority:${priority}`);
+      if (project !== undefined) args.push(project === null ? "project:" : `project:${project}`);
+      if (due !== undefined) args.push(due === null ? "due:" : `due:${due}`);
+      if (tags !== undefined) {
+        const current = (await exportTasks([String(id)]))[0];
+        const currentTags = new Set(current?.tags ?? []);
+        const nextTags = new Set(tags);
+        for (const tag of currentTags) {
+          if (!nextTags.has(tag)) args.push(`-${tag}`);
+        }
+        for (const tag of nextTags) {
+          if (!currentTags.has(tag)) args.push(`+${tag}`);
+        }
+      }
+
+      let ok = true;
+      if (args.length > 2) {
+        const result = await runTask(args);
+        ok = result.exitCode === 0;
+        bb.realtime.publish(TASKS_CHANGED, { reason: "modify" });
+      }
+      const task = (await exportTasks([String(id)]))[0] ?? null;
+      return { ok, task };
     },
     tasks_complete: async ({ id }) => {
       const result = await runTask([String(id), "done"]);

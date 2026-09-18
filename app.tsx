@@ -336,7 +336,11 @@ function TaskList({
   );
 
   async function refresh() {
-    const { tasks: next } = await rpc.call("tasks_list", { filter });
+    // The server no longer forces status:pending — ask for it explicitly
+    // until the "show completed" toggle from the redesign lands.
+    const { tasks: next } = await rpc.call("tasks_list", {
+      filter: ["status:pending", ...filter],
+    });
     setTasks(next);
   }
 
