@@ -130,3 +130,120 @@ describe("ThreadPanel pinned section", () => {
     });
   });
 });
+
+describe("ThreadPanel recent section", () => {
+  const withRecent = {
+    pins: [],
+    recent: [
+      { uuid: A, at: 2, by: "agent" as const },
+      { uuid: B, at: 1, by: "user" as const },
+    ],
+    searches: [{ query: "milk", at: 3 }],
+  };
+
+  it("badges rows by who touched them and lists past searches", async () => {
+    const view = panel({
+      thread_get: () => ({ state: withRecent }),
+      tasks_list: () => ({
+        tasks: [task(A, "Agent did this", "completed"), task(B, "You viewed this", "pending", 2)],
+      }),
+    });
+    await waitFor(() => view.getByText("Agent did this"));
+    expect(view.getAllByText("agent").length).toBeGreaterThan(0);
+    expect(view.getAllByText("you").length).toBeGreaterThan(0);
+    expect(view.getByText("milk")).toBeTruthy();
+  });
+
+  it("pins from a recent row", async () => {
+    const view = panel({
+      thread_get: () => ({ state: withRecent }),
+      tasks_list: () => ({ tasks: [task(A, "Agent did this")] }),
+      thread_pin: () => ({ state: { ...withRecent, pins: [A] } }),
+    });
+    await waitFor(() => view.getByText("Agent did this"));
+    fireEvent.click(view.getAllByLabelText(/^pin$/i)[0]);
+    await waitFor(() =>
+      expect(view.inspection.rpcCalls.some((c) => c.method === "thread_pin")).toBe(true),
+    );
+  });
+
+  it("a finished task in Recent is not openable but can be pinned and unpinned", async () => {
+    const state = { pins: [], recent: [{ uuid: A, at: 2, by: "agent" as const }], searches: [] };
+    const view = panel({
+      thread_get: () => ({ state }),
+      tasks_list: () => ({ tasks: [task(A, "Agent finished this", "completed")] }),
+      tasks_get: () => ({ task: null }),
+      thread_pin: () => ({ state: { ...state, pins: [A] } }),
+      thread_unpin: () => ({ state }),
+    });
+    await waitFor(() => view.getByText("Agent finished this"));
+    const button = view.getByText("Agent finished this").closest("button") as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(view.inspection.rpcCalls.some((c) => c.method === "tasks_get")).toBe(false);
+    fireEvent.click(view.getByLabelText(/^pin$/i));
+    await waitFor(() =>
+      expect(view.inspection.rpcCalls.some((c) => c.method === "thread_pin")).toBe(true),
+    );
+  });
+
+  it("unpins a pinned finished task from Recent", async () => {
+    const state = { pins: [A], recent: [{ uuid: A, at: 2, by: "agent" as const }], searches: [] };
+    const view = panel({
+      thread_get: () => ({ state }),
+      tasks_list: () => ({ tasks: [task(A, "Agent finished this", "completed")] }),
+      thread_unpin: () => ({ state: { ...state, pins: [] } }),
+    });
+    await waitFor(() => view.getAllByText("Agent finished this"));
+    // Pinned section and Recent section both show it; both offer Unpin.
+    fireEvent.click(view.getAllByLabelText(/^unpin$/i)[1]);
+    await waitFor(() =>
+      expect(view.inspection.rpcCalls.find((c) => c.method === "thread_unpin")?.input).toEqual({
+        threadId: "t1",
+        uuid: A,
+      }),
+    );
+  });
+
+  it("clicking a past-search chip fills the search box", async () => {
+    const view = panel({
+      thread_get: () => ({ state: withRecent }),
+      tasks_list: () => ({ tasks: [task(A, "Buy milk")] }),
+    });
+    await waitFor(() => view.getByText("milk"));
+    fireEvent.click(view.getByText("milk"));
+    expect((view.getByLabelText("Search tasks") as HTMLInputElement).value).toBe("milk");
+  });
+});
+
+describe("ThreadPanel search", () => {
+  it("shows matching pending tasks and records the search on Enter", async () => {
+    const view = panel({
+      thread_get: () => ({ state: { pins: [], recent: [], searches: [] } }),
+      tasks_list: () => ({ tasks: [task(A, "Buy milk"), task(B, "Write plan", "pending", 2)] }),
+      thread_record_search: () => ({ ok: true }),
+    });
+    const input = view.getByLabelText("Search tasks");
+    fireEvent.change(input, { target: { value: "milk" } });
+    await waitFor(() => view.getByText("Buy milk"));
+    expect(view.queryByText("Write plan")).toBeNull();
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() =>
+      expect(
+        view.inspection.rpcCalls.find((c) => c.method === "thread_record_search")?.input,
+      ).toEqual({ threadId: "t1", query: "milk" }),
+    );
+  });
+
+  it("starts with params.query", async () => {
+    const view = panel(
+      {
+        thread_get: () => ({ state: { pins: [], recent: [], searches: [] } }),
+        tasks_list: () => ({ tasks: [task(A, "Buy milk")] }),
+      },
+      { query: "milk" },
+    );
+    await waitFor(() => view.getByText("Buy milk"));
+    expect((view.getByLabelText("Search tasks") as HTMLInputElement).value).toBe("milk");
+  });
+});
