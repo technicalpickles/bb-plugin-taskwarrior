@@ -1,21 +1,18 @@
-Keep a todo list beside the work it belongs to, in the sidebar and in
-your agent threads.
+Browse and manage your Taskwarrior tasks from BB, and keep the ones that matter next to the thread you're working in.
 
 ## What you get
 
-- An **Example todos** page in the left sidebar that adds, completes, and
-  removes todos.
-- A `bb taskwarrior` command that does the same from a terminal.
-- Live updates, so a change made in one place reaches every open page at once.
+- A **Taskwarrior** page in the left sidebar: list, sort, filter, group, edit, complete, and delete tasks.
+- A **Tasks** tab in every thread with three sections: **Pinned** (your ordered shortlist for this thread), **Project** (open tasks for the matching Taskwarrior project), and **Recent** (tasks you opened or the agent touched, plus past searches).
+- Command palette rows: **Tasks: find…**, **Tasks: add…**, **Tasks: pin to this thread**, and **Tasks: open this thread's tasks**.
+- A `bb tw` command that forwards straight to the `task` CLI.
 
-## How it works
+## Projects
 
-The todos live in this plugin's own storage on the BB server, one list per
-installation. Nothing leaves the machine, and the plugin needs no account, API
-key, or external service.
+The Project section looks for a Taskwarrior project with the same name as the BB project. No match shows a warning with a picker (closest name suggested), so you can link the right one.
 
 ## For agents
 
-The bundled skill tells an agent to read the list with `bb taskwarrior list`, add
-one todo at a time with `bb taskwarrior add`, and close finished work with
-`bb taskwarrior done`.
+The `taskwarrior_run` tool runs `task` with any arguments. Tasks an agent names by id or uuid, or creates with `add`, show up in the thread's Recent list with an **agent** badge.
+
+Everything runs against your local Taskwarrior data. No account or external service.

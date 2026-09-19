@@ -1,20 +1,43 @@
 # bb-plugin-taskwarrior
 
-A BB plugin that keeps a todo list. It shows every surface a plugin can own:
+A BB plugin for [Taskwarrior](https://taskwarrior.org). It runs your local `task` CLI and puts your tasks in a few places:
 
-- `server.ts` — the backend: a todo store in `bb.storage.kv`, RPC methods
-  for the page, a `bb taskwarrior` CLI command, a setting, and a realtime signal
-  that keeps every open page current.
-- `app.tsx` — the frontend: an **Example todos** page in the left sidebar
-  (`app.slots.navPanel`) built from the vendored components.
-- `skills/example-todos/SKILL.md` — a skill that tells agents how to keep the list
-  with `bb taskwarrior`. BB imports it into agent threads automatically.
-- `PLUGIN_OVERVIEW.md` — the store listing text: a longer version of
-  `bb.description` that the plugin detail page shows under it. See
-  [Store listing](#store-listing).
+- **Taskwarrior page** (sidebar, `app.slots.navPanel`): browse, sort, filter, group, edit, complete, and delete tasks.
+- **Tasks thread tab** (`app.slots.threadPanelAction`): thread-local views of your tasks.
+  - **Pinned**: tasks you pinned to this thread, reorderable with up/down buttons. Finished pins show struck through and can be cleared.
+  - **Project**: open tasks for the effective Taskwarrior project, collapsed by default.
+  - **Recent**: tasks viewed in this thread and past searches, each marked "you" or "agent".
+  - A search box on top. Enter records the search.
+- **Command palette rows**: `Tasks: find…` (opens the tab with search focused), `Tasks: add…`, `Tasks: pin to this thread`, and `Tasks: open this thread's tasks`. The last two need a thread.
+- **`bb tw <args...>`**: forwards to `task`, so any filter, report, or command works.
+- **`taskwarrior_run` agent tool**: same argv as `task`. The bundled skill (`skills/taskwarrior/SKILL.md`) documents it.
 
-Try it: install the plugin, open **Example todos** in the sidebar, then run
-`bb taskwarrior add "Ship it"` in a terminal. The page updates at once.
+## Project matching
+
+The Project section uses the BB project's name as the Taskwarrior project, unless you linked a different one. A task matches if its project is that name or a dotted child (`home` matches `home.chores`, not `homework`). The implicit personal project has no default, so it shows the picker only.
+
+If no Taskwarrior project has that name, the section shows a warning with a picker (closest name marked "(suggested)") and an "Add a task" button. If the project exists but nothing is pending, it says "All clear".
+
+## Agent-touched tasks
+
+When an agent runs `taskwarrior_run`, tasks it names by id or uuid, plus any task it creates with `add`, land in that thread's Recent with an "agent" badge and the tab updates live. Report output (`list`, `export`) does not count. Recording is best-effort and never fails the command.
+
+## State
+
+Thread state (pins, recent, searches) and project links live in plugin storage (`threads/<threadId>`, `projects/<projectId>`), keyed by task uuid. Taskwarrior stays the source of truth for task content. Recent is capped at 20 entries, searches at 10.
+
+## Layout
+
+- `server.ts`: `task` runner, RPC methods, `bb tw`, `taskwarrior_run`, realtime signals.
+- `contract.ts`: shared RPC contract and schemas (browser-safe).
+- `app.tsx`: slot registrations.
+- `components/tasks/`: the page (`TaskList`, `TaskDetail`).
+- `components/thread-panel/`: the thread tab.
+- `lib/`: pure models (thread state, project link, task refs, palette rows, formatters).
+- `PLUGIN_OVERVIEW.md`: the store listing text. See [Store listing](#store-listing).
+- Design notes: `docs/superpowers/specs/2026-09-19-thread-panel-design.md`.
+
+Develop with `npm test` and `npm run typecheck`.
 
 ## UI components
 
