@@ -37,6 +37,22 @@ export type TaskRecord = z.infer<typeof taskRecordSchema>;
 /** Realtime channel app.tsx listens on to refresh the sidebar panel. */
 export const TASKS_CHANGED = "tasks-changed";
 
+/** Realtime channel the thread panel listens on; payload `{ threadId }`. */
+export const THREAD_STATE_CHANGED = "thread-state-changed";
+
+export const threadStateSchema = z.object({
+  pins: z.array(z.string()),
+  recent: z.array(
+    z.object({
+      uuid: z.string(),
+      at: z.number(),
+      by: z.enum(["user", "agent"]),
+    }),
+  ),
+  searches: z.array(z.object({ query: z.string(), at: z.number() })),
+});
+export type ThreadState = z.infer<typeof threadStateSchema>;
+
 export const rpcContract = defineRpcContract({
   tasks_list: {
     // `filter` is a list of Taskwarrior filter tokens (e.g. "project:home",
