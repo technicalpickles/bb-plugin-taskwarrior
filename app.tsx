@@ -8,6 +8,7 @@ import { definePluginApp, useBbNavigate } from "@get-bb/plugin-sdk/app";
 import { DEFAULT_FILTERS, type ListFilters } from "./lib/task-list-model";
 import { TaskDetail } from "@/components/tasks/task-detail";
 import { TaskList } from "@/components/tasks/task-list";
+import { ThreadPanel, type ThreadPanelParams } from "@/components/thread-panel/thread-panel";
 
 function TasksPanel({ subPath }: { subPath: string }) {
   const navigate = useBbNavigate();
@@ -32,5 +33,14 @@ export default definePluginApp((app) => {
     icon: "ListTodo",
     path: "tasks",
     component: TasksPanel,
+  });
+  app.slots.threadPanelAction({
+    id: "tasks",
+    title: "Tasks",
+    icon: "ListTodo",
+    layout: "flush",
+    component: (props) => (
+      <ThreadPanel threadId={props.threadId} params={props.params as ThreadPanelParams | null} />
+    ),
   });
 });
