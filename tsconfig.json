@@ -25,6 +25,8 @@
     "app.tsx",
     "contract.ts",
     "components",
-    "lib"
+    "lib",
+    "test",
+    "vitest.config.ts"
   ]
 }

@@ -37,6 +37,34 @@ export type TaskRecord = z.infer<typeof taskRecordSchema>;
 /** Realtime channel app.tsx listens on to refresh the sidebar panel. */
 export const TASKS_CHANGED = "tasks-changed";
 
+/** Realtime channel the thread panel listens on; payload `{ threadId }`. */
+export const THREAD_STATE_CHANGED = "thread-state-changed";
+
+export const threadStateSchema = z.object({
+  pins: z.array(z.string()),
+  recent: z.array(
+    z.object({
+      uuid: z.string(),
+      at: z.number(),
+      by: z.enum(["user", "agent"]),
+    }),
+  ),
+  searches: z.array(z.object({ query: z.string(), at: z.number() })),
+});
+export type ThreadState = z.infer<typeof threadStateSchema>;
+
+// Stored uuids are replayed into `task` argv by every client, so they are
+// validated at the door. Deliberately permissive rather than `z.uuid()`:
+// Taskwarrior does not enforce RFC 4122 version/variant bits, so a real task
+// uuid can fail a strict check. This only has to exclude anything that could
+// act as a filter token or command word.
+const uuidToken = z
+  .string()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, "not a task uuid");
+
+const PIN_CAP = 200;
+const QUERY_MAX = 200;
+
 export const rpcContract = defineRpcContract({
   tasks_list: {
     // `filter` is a list of Taskwarrior filter tokens (e.g. "project:home",
@@ -74,5 +102,45 @@ export const rpcContract = defineRpcContract({
   tasks_delete: {
     input: z.object({ id: z.number() }),
     output: z.object({ ok: z.boolean() }),
+  },
+  thread_get: {
+    input: z.object({ threadId: z.string() }),
+    output: z.object({ state: threadStateSchema }),
+  },
+  thread_pin: {
+    input: z.object({ threadId: z.string(), uuid: uuidToken }),
+    output: z.object({ state: threadStateSchema }),
+  },
+  thread_unpin: {
+    input: z.object({ threadId: z.string(), uuid: uuidToken }),
+    output: z.object({ state: threadStateSchema }),
+  },
+  thread_reorder_pins: {
+    input: z.object({ threadId: z.string(), order: z.array(uuidToken).max(PIN_CAP) }),
+    output: z.object({ state: threadStateSchema }),
+  },
+  thread_record_view: {
+    input: z.object({ threadId: z.string(), uuid: uuidToken }),
+    output: z.object({ ok: z.boolean() }),
+  },
+  thread_record_search: {
+    input: z.object({ threadId: z.string(), query: z.string().max(QUERY_MAX) }),
+    output: z.object({ ok: z.boolean() }),
+  },
+  project_link_get: {
+    input: z.object({ projectId: z.string() }),
+    output: z.object({ twProject: z.string().nullable() }),
+  },
+  project_link_set: {
+    input: z.object({ projectId: z.string(), twProject: z.string().nullable() }),
+    output: z.object({ ok: z.boolean() }),
+  },
+  project_status: {
+    input: z.object({ name: z.string() }),
+    output: z.object({ exists: z.boolean(), pending: z.number() }),
+  },
+  tw_projects_list: {
+    input: z.object({}),
+    output: z.object({ projects: z.array(z.string()) }),
   },
 });

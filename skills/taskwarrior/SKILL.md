@@ -38,3 +38,4 @@ bb tw export project:home
   Double-check filters before bulk `modify`/`delete` calls since there's no
   confirmation step to catch a too-broad filter.
 - Commands time out after 20s.
+- Tasks you touch through `taskwarrior_run` show up in the thread's Tasks tab (Recent, with an "agent" badge). Put the id or uuid first in the command (`["12", "done"]`, not `["done", "12"]`) rather than relying on listings; report output like `list` is not recorded.

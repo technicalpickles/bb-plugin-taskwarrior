@@ -14,7 +14,16 @@ import {
   type BbPluginApi,
 } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { rpcContract, taskRecordSchema, TASKS_CHANGED, type TaskRecord } from "./contract";
+import {
+  rpcContract,
+  taskRecordSchema,
+  TASKS_CHANGED,
+  THREAD_STATE_CHANGED,
+  type TaskRecord,
+} from "./contract";
+import { belongsToProject } from "./lib/project-link";
+import { extractTaskRefs, parseCreatedTaskId } from "./lib/task-refs";
+import { createThreadStore } from "./lib/thread-store";
 
 const execFileAsync = promisify(execFile);
 
@@ -30,6 +39,34 @@ const NON_INTERACTIVE_OVERRIDES = [
 ];
 
 const TIMEOUT_MS = 20_000;
+
+// Taskwarrior command words that change data. Presence of one as an exact
+// argv token is what makes an agent call worth a realtime refresh: plenty of
+// mutations name no task at all (`undo`, `sync`) or lead with a filter
+// (`project:home modify priority:H`), so ref detection cannot stand in for
+// this. A description token that happens to equal one of these costs one
+// extra refresh, which is cheap; missing a mutation leaves a stale panel.
+const MUTATING_COMMANDS = new Set([
+  "add",
+  "modify",
+  "done",
+  "delete",
+  "start",
+  "stop",
+  "annotate",
+  "denotate",
+  "append",
+  "prepend",
+  "edit",
+  "purge",
+  "undo",
+  "import",
+  "duplicate",
+  "sync",
+  "log",
+]);
+
+const mutates = (args: string[]) => args.some((token) => MUTATING_COMMANDS.has(token));
 
 export default async function plugin(bb: BbPluginApi) {
   bb.log.info("loaded");
@@ -117,6 +154,11 @@ export default async function plugin(bb: BbPluginApi) {
   // A blocker may not be in the caller's current filter/list, so it's
   // resolved with its own `task export` lookup rather than cross-referencing
   // the batch already in hand.
+  async function resolveUuids(refs: string[]): Promise<string[]> {
+    if (refs.length === 0) return [];
+    return (await exportTasks(refs)).map((task) => task.uuid);
+  }
+
   async function attachBlockedBy(tasks: TaskRecord[]): Promise<TaskRecord[]> {
     const blockerUuids = new Set<string>();
     for (const task of tasks) {
@@ -138,7 +180,51 @@ export default async function plugin(bb: BbPluginApi) {
     });
   }
 
+  const threads = createThreadStore(bb.storage.kv, (threadId) =>
+    bb.realtime.publish(THREAD_STATE_CHANGED, { threadId }),
+  );
+
   bb.rpc.register(rpcContract, {
+    thread_get: async ({ threadId }) => ({ state: await threads.get(threadId) }),
+    thread_pin: async ({ threadId, uuid }) => ({ state: await threads.pin(threadId, uuid) }),
+    thread_unpin: async ({ threadId, uuid }) => ({ state: await threads.unpin(threadId, uuid) }),
+    thread_reorder_pins: async ({ threadId, order }) => ({
+      state: await threads.reorder(threadId, order),
+    }),
+    thread_record_view: async ({ threadId, uuid }) => {
+      await threads.recordView(threadId, uuid);
+      return { ok: true };
+    },
+    thread_record_search: async ({ threadId, query }) => {
+      await threads.recordSearch(threadId, query);
+      return { ok: true };
+    },
+    project_link_get: async ({ projectId }) => ({
+      twProject: await threads.getProjectLink(projectId),
+    }),
+    project_link_set: async ({ projectId, twProject }) => {
+      await threads.setProjectLink(projectId, twProject);
+      return { ok: true };
+    },
+    project_status: async ({ name }) => {
+      if (name.trim() === "") return { exists: false, pending: 0 };
+      // `project:X` is a prefix match in Taskwarrior; post-filter to X or X.*.
+      const tasks = (await exportTasks([`project:${name}`])).filter((task) =>
+        belongsToProject(task.project, name),
+      );
+      return {
+        exists: tasks.length > 0,
+        pending: tasks.filter((task) => task.status === "pending").length,
+      };
+    },
+    tw_projects_list: async () => {
+      const result = await runTask(["_projects"]);
+      const projects =
+        result.exitCode === 0
+          ? [...new Set(result.stdout.split("\n").map((line) => line.trim()).filter(Boolean))].sort()
+          : [];
+      return { projects };
+    },
     tasks_list: async ({ filter }) => ({ tasks: await attachBlockedBy(await exportTasks(filter)) }),
     tasks_get: async ({ id }) => {
       const [task] = await attachBlockedBy(await exportTasks([String(id)]));
@@ -149,9 +235,8 @@ export default async function plugin(bb: BbPluginApi) {
       if (result.exitCode !== 0) {
         throw new Error(result.stderr || "task add failed");
       }
-      const match = /Created task (\d+)\./.exec(result.stdout);
-      const task =
-        match !== null ? (await exportTasks([match[1]]))[0] ?? null : null;
+      const created = parseCreatedTaskId(result.stdout);
+      const task = created !== null ? (await exportTasks([created]))[0] ?? null : null;
       bb.realtime.publish(TASKS_CHANGED, { reason: "add" });
       return { task };
     },
@@ -254,8 +339,41 @@ export default async function plugin(bb: BbPluginApi) {
           "Argv to pass to `task`, one token per array element (no shell quoting).",
         ),
     }),
-    async execute({ args }) {
+    async execute({ args }, ctx) {
+      // Resolve refs to UUIDs first: integer IDs are invalid once a task is
+      // completed or deleted, and we only ever store UUIDs.
+      let touched: string[] = [];
+      try {
+        touched = await resolveUuids(extractTaskRefs(args));
+      } catch (error) {
+        bb.log.warn(`recent: could not resolve refs: ${String(error)}`);
+      }
+
       const result = await runTask(args);
+
+      // Refresh first and independently: a mutation the panel never hears
+      // about is worse than a duplicate refresh, and recording is a separate
+      // best-effort concern that must not gate it.
+      if (result.exitCode === 0 && mutates(args)) {
+        try {
+          bb.realtime.publish(TASKS_CHANGED, { reason: "agent" });
+        } catch (error) {
+          bb.log.warn(`recent: could not publish a change signal: ${String(error)}`);
+        }
+      }
+
+      try {
+        if (result.exitCode === 0 && args[0] === "add") {
+          const created = parseCreatedTaskId(result.stdout);
+          if (created !== null) touched = touched.concat(await resolveUuids([created]));
+        }
+        if (result.exitCode === 0 && touched.length > 0) {
+          for (const uuid of touched) await threads.recordView(ctx.threadId, uuid, "agent");
+        }
+      } catch (error) {
+        bb.log.warn(`recent: could not record agent touches: ${String(error)}`);
+      }
+
       const text = [result.stdout, result.stderr].filter(Boolean).join("\n");
       return {
         content: [{ type: "text", text: text || "(no output)" }],
