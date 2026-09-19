@@ -19,7 +19,16 @@ function panel(rpc: Record<string, (input: any) => unknown>, params: unknown = n
   return renderSlot(
     { component: ThreadPanel },
     { threadId: "t1", params } as any,
-    { rpc: rpc as any, context: { projectId: "p1", threadId: "t1" } },
+    {
+      rpc: {
+        // The collapsed project section still loads its link and project list.
+        project_link_get: () => ({ twProject: null }),
+        tw_projects_list: () => ({ projects: [] }),
+        project_status: () => ({ exists: true, pending: 0 }),
+        ...rpc,
+      } as any,
+      context: { projectId: "p1", threadId: "t1" },
+    },
   );
 }
 
@@ -286,5 +295,181 @@ describe("ThreadPanel search", () => {
     );
     await waitFor(() => view.getByText("Buy milk"));
     expect((view.getByLabelText("Search tasks") as HTMLInputElement).value).toBe("milk");
+  });
+});
+
+const projectOpts = (over: object = {}) => ({
+  sidebarThreads: {
+    status: "ready" as const,
+    threads: [],
+    projects: [{ id: "p1", name: "bb-plugin-taskwarrior", isPersonal: false, ...over }],
+  },
+});
+
+function projectPanel(rpc: Record<string, (input: any) => unknown>, over: object = {}) {
+  return renderSlot(
+    { component: ThreadPanel },
+    { threadId: "t1", params: null } as any,
+    {
+      rpc: {
+        thread_get: () => ({ state: { pins: [], recent: [], searches: [] } }),
+        tasks_list: () => ({ tasks: [] }),
+        project_link_get: () => ({ twProject: null }),
+        tw_projects_list: () => ({ projects: ["home", "taskwarrior"] }),
+        ...rpc,
+      } as any,
+      context: { projectId: "p1", threadId: "t1" },
+      ...projectOpts(over),
+    },
+  );
+}
+
+describe("ThreadPanel project section", () => {
+  it("warns when no taskwarrior project matches the bb project name", async () => {
+    const view = projectPanel({ project_status: () => ({ exists: false, pending: 0 }) });
+    fireEvent.click(await view.findByText("Project"));
+    await waitFor(() => view.getByText(/No Taskwarrior project named.*bb-plugin-taskwarrior/i));
+  });
+
+  it("says all clear (not a warning) when the project exists but nothing is pending", async () => {
+    const view = projectPanel({ project_status: () => ({ exists: true, pending: 0 }) });
+    fireEvent.click(await view.findByText("Project"));
+    await waitFor(() => view.getByText(/all clear/i));
+    expect(view.queryByText(/No Taskwarrior project named/i)).toBeNull();
+  });
+
+  it("lists pending tasks when the project is healthy", async () => {
+    const view = projectPanel({
+      project_status: () => ({ exists: true, pending: 1 }),
+      tasks_list: (input: { filter: string[] }) =>
+        input.filter.includes("project:bb-plugin-taskwarrior")
+          ? { tasks: [{ ...task(A, "Project task"), project: "bb-plugin-taskwarrior" }] }
+          : { tasks: [] },
+    });
+    fireEvent.click(await view.findByText("Project"));
+    await waitFor(() => view.getByText("Project task"));
+    const call = view.inspection.rpcCalls.find(
+      (c) => c.method === "tasks_list" && (c.input as any).filter.includes("status:pending"),
+    );
+    expect((call?.input as any).filter).toEqual([
+      "status:pending",
+      "project:bb-plugin-taskwarrior",
+    ]);
+  });
+
+  it("post-filters prefix matches so homework does not show under home", async () => {
+    const view = projectPanel({
+      project_link_get: () => ({ twProject: "home" }),
+      project_status: () => ({ exists: true, pending: 2 }),
+      tasks_list: (input: { filter: string[] }) =>
+        input.filter.includes("project:home")
+          ? {
+              tasks: [
+                { ...task(A, "Fix sink", "pending", 1), project: "home" },
+                { ...task(B, "Grade essays", "pending", 2), project: "homework" },
+              ],
+            }
+          : { tasks: [] },
+    });
+    fireEvent.click(await view.findByText("Project"));
+    await waitFor(() => view.getByText("Fix sink"));
+    expect(view.queryByText("Grade essays")).toBeNull();
+  });
+
+  it("uses a saved override instead of the bb project name", async () => {
+    const view = projectPanel({
+      project_link_get: () => ({ twProject: "taskwarrior" }),
+      project_status: (input: { name: string }) => ({
+        exists: input.name === "taskwarrior",
+        pending: input.name === "taskwarrior" ? 1 : 0,
+      }),
+      tasks_list: (input: { filter: string[] }) =>
+        input.filter.includes("project:taskwarrior")
+          ? { tasks: [{ ...task(A, "Linked task"), project: "taskwarrior" }] }
+          : { tasks: [] },
+    });
+    fireEvent.click(await view.findByText("Project"));
+    await waitFor(() => view.getByText("Linked task"));
+  });
+
+  it("saves a link chosen from the picker", async () => {
+    const view = projectPanel({
+      project_status: () => ({ exists: false, pending: 0 }),
+      project_link_set: () => ({ ok: true }),
+    });
+    fireEvent.click(await view.findByText("Project"));
+    await waitFor(() => view.getByText(/No Taskwarrior project named/i));
+    const select = await view.findByLabelText(/link a taskwarrior project/i);
+    await waitFor(() => view.getByRole("option", { name: "home" }));
+    fireEvent.change(select, { target: { value: "home" } });
+    await waitFor(() =>
+      expect(view.inspection.rpcCalls.find((c) => c.method === "project_link_set")?.input).toEqual({
+        projectId: "p1",
+        twProject: "home",
+      }),
+    );
+  });
+
+  it("marks the closest existing project as suggested", async () => {
+    const view = projectPanel({
+      project_status: () => ({ exists: false, pending: 0 }),
+      tw_projects_list: () => ({ projects: ["home", "bb_plugin_taskwarrior"] }),
+    });
+    fireEvent.click(await view.findByText("Project"));
+    await waitFor(() => view.getByRole("option", { name: "bb_plugin_taskwarrior (suggested)" }));
+  });
+
+  it("adds a task into the missing project", async () => {
+    const view = projectPanel({
+      project_status: () => ({ exists: false, pending: 0 }),
+      tasks_add: () => ({ task: task(A, "New thing", "pending", 7) }),
+      tasks_modify: () => ({ task: task(A, "New thing", "pending", 7) }),
+    });
+    fireEvent.click(await view.findByText("Project"));
+    fireEvent.click(await view.findByRole("button", { name: /add a task/i }));
+    fireEvent.change(view.getByLabelText(/new task description/i), {
+      target: { value: "New thing" },
+    });
+    fireEvent.click(view.getByRole("button", { name: /^add$/i }));
+    await waitFor(() => {
+      const calls = view.inspection.rpcCalls;
+      expect(calls.find((c) => c.method === "tasks_add")?.input).toEqual({
+        description: "New thing",
+      });
+      expect(calls.find((c) => c.method === "tasks_modify")?.input).toEqual({
+        id: 7,
+        project: "bb-plugin-taskwarrior",
+      });
+    });
+  });
+
+  it("pins from a project row", async () => {
+    const view = projectPanel({
+      project_status: () => ({ exists: true, pending: 1 }),
+      tasks_list: (input: { filter: string[] }) =>
+        input.filter.includes("project:bb-plugin-taskwarrior")
+          ? { tasks: [{ ...task(A, "Project task"), project: "bb-plugin-taskwarrior" }] }
+          : { tasks: [] },
+      thread_pin: () => ({ state: { pins: [A], recent: [], searches: [] } }),
+    });
+    fireEvent.click(await view.findByText("Project"));
+    await waitFor(() => view.getByText("Project task"));
+    fireEvent.click(view.getByLabelText(/^pin$/i));
+    await waitFor(() =>
+      expect(view.inspection.rpcCalls.find((c) => c.method === "thread_pin")?.input).toEqual({
+        threadId: "t1",
+        uuid: A,
+      }),
+    );
+  });
+
+  it("has no default for the personal project", async () => {
+    const view = projectPanel(
+      { project_status: () => ({ exists: true, pending: 1 }) },
+      { isPersonal: true },
+    );
+    fireEvent.click(await view.findByText("Project"));
+    await view.findByLabelText(/link a taskwarrior project/i);
+    expect(view.inspection.rpcCalls.some((c) => c.method === "project_status")).toBe(false);
   });
 });

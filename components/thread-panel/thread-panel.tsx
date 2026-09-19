@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { useRpc } from "@get-bb/plugin-sdk/app";
+import { experimental_useSidebarThreads, useBbContext, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import { rpcContract, type TaskRecord } from "../../contract";
 import { TaskDetail } from "@/components/tasks/task-detail";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
+import { ProjectSection } from "./project-section";
 import { PinnedSection } from "./pinned-section";
 import { RecentSection } from "./recent-section";
 import { SearchResults } from "./search-results";
@@ -24,6 +25,9 @@ export function ThreadPanel({
   params: ThreadPanelParams | null;
 }) {
   const rpc = useRpc<typeof rpcContract>();
+  const { projectId } = useBbContext();
+  const { projects } = experimental_useSidebarThreads();
+  const bbProject = projects.find((p) => p.id === projectId);
   const thread = useThreadState(threadId);
   const [query, setQuery] = useState(params?.query ?? "");
   const [openTaskId, setOpenTaskId] = useState<number | null>(null);
@@ -95,6 +99,15 @@ export function ThreadPanel({
                   reorder: (order) => void thread.reorder(order),
                   complete: (task) => void completeTask(task),
                 }}
+              />
+            )}
+            {thread.state !== null && tasks !== null && (
+              <ProjectSection
+                projectId={projectId}
+                bbProjectName={bbProject?.name ?? null}
+                isPersonal={bbProject?.isPersonal ?? false}
+                pinnedUuids={pins}
+                actions={{ open: openTask, togglePin }}
               />
             )}
             <h3 className="px-3 pb-1 pt-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
