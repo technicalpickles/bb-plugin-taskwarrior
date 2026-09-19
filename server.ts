@@ -21,6 +21,7 @@ import {
   THREAD_STATE_CHANGED,
   type TaskRecord,
 } from "./contract";
+import { belongsToProject } from "./lib/project-link";
 import { createThreadStore } from "./lib/thread-store";
 
 const execFileAsync = promisify(execFile);
@@ -172,7 +173,11 @@ export default async function plugin(bb: BbPluginApi) {
       return { ok: true };
     },
     project_status: async ({ name }) => {
-      const tasks = await exportTasks([`project:${name}`]);
+      if (name.trim() === "") return { exists: false, pending: 0 };
+      // `project:X` is a prefix match in Taskwarrior; post-filter to X or X.*.
+      const tasks = (await exportTasks([`project:${name}`])).filter((task) =>
+        belongsToProject(task.project, name),
+      );
       return {
         exists: tasks.length > 0,
         pending: tasks.filter((task) => task.status === "pending").length,

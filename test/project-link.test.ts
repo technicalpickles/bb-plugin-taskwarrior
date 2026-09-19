@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { closestProject, effectiveProject, projectHealth } from "../lib/project-link";
+import { belongsToProject, closestProject, effectiveProject, projectHealth } from "../lib/project-link";
 
 describe("effectiveProject", () => {
   it("prefers a non-empty override", () => {
@@ -47,5 +47,24 @@ describe("closestProject", () => {
   });
   it("returns null when nothing is close", () => {
     expect(closestProject("zzz", ["home", "work"])).toBeNull();
+  });
+});
+
+describe("belongsToProject", () => {
+  it("matches the exact name", () => {
+    expect(belongsToProject("home", "home")).toBe(true);
+  });
+  it("matches dotted children", () => {
+    expect(belongsToProject("home.kitchen", "home")).toBe(true);
+  });
+  it("rejects sibling prefixes", () => {
+    expect(belongsToProject("homework", "home")).toBe(false);
+  });
+  it("rejects tasks without a project", () => {
+    expect(belongsToProject(undefined, "home")).toBe(false);
+  });
+  it("rejects an empty name", () => {
+    expect(belongsToProject("home", "")).toBe(false);
+    expect(belongsToProject(undefined, "")).toBe(false);
   });
 });

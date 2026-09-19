@@ -20,7 +20,7 @@ function matches(task, tokens) {
   if (refs.length > 0 && !refs.some((r) => String(task.id) === r || task.uuid === r)) return false;
   return filters.every((f) => {
     const [key, value] = [f.slice(0, f.indexOf(":")), f.slice(f.indexOf(":") + 1)];
-    if (key === "project") return task.project === value || String(task.project ?? "").startsWith(`${value}.`);
+    if (key === "project") return String(task.project ?? "").startsWith(value);
     if (key === "status") return task.status === value;
     return true;
   });

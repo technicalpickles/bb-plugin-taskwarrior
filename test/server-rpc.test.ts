@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createFakePluginHost } from "@get-bb/plugin-sdk/testing";
@@ -9,8 +9,10 @@ const FAKE_TASK = resolve(__dirname, "fixtures/fake-task.mjs");
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
+const dirs: string[] = [];
 async function boot(tasks: object[]) {
   const dir = mkdtempSync(join(tmpdir(), "tw-"));
+  dirs.push(dir);
   writeFileSync(join(dir, "db.json"), JSON.stringify({ tasks }));
   const host = createFakePluginHost({ pluginId: "taskwarrior" });
   await plugin(host.bb);
@@ -21,6 +23,7 @@ async function boot(tasks: object[]) {
 const hosts: { harness: { lifecycle: { dispose(): Promise<void> } } }[] = [];
 afterEach(async () => {
   while (hosts.length > 0) await hosts.pop()!.harness.lifecycle.dispose();
+  while (dirs.length > 0) rmSync(dirs.pop()!, { recursive: true, force: true });
 });
 
 describe("thread rpc", () => {
@@ -68,6 +71,36 @@ describe("project rpc", () => {
     expect(await call("project_status", { name: "nope" })).toEqual({ exists: false, pending: 0 });
     expect(await call("project_status", { name: "done-only" })).toEqual({ exists: true, pending: 0 });
     expect(await call("project_status", { name: "live" })).toEqual({ exists: true, pending: 1 });
+  });
+
+  it("does not treat a sibling prefix as the project", async () => {
+    const host = await boot([{ uuid: A, description: "a", status: "pending", project: "homework" }]);
+    hosts.push(host);
+    expect(await host.harness.behavior.callRpc("project_status", { name: "home" })).toEqual({
+      exists: false,
+      pending: 0,
+    });
+  });
+
+  it("counts dotted children but not siblings", async () => {
+    const host = await boot([
+      { uuid: A, description: "a", status: "pending", project: "home.kitchen" },
+      { uuid: B, description: "b", status: "pending", project: "homework" },
+    ]);
+    hosts.push(host);
+    expect(await host.harness.behavior.callRpc("project_status", { name: "home" })).toEqual({
+      exists: true,
+      pending: 1,
+    });
+  });
+
+  it("reports an empty name as missing", async () => {
+    const host = await boot([{ uuid: A, description: "a", status: "pending" }]);
+    hosts.push(host);
+    expect(await host.harness.behavior.callRpc("project_status", { name: "" })).toEqual({
+      exists: false,
+      pending: 0,
+    });
   });
 
   it("lists taskwarrior projects", async () => {

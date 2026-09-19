@@ -45,3 +45,9 @@ export function closestProject(name: string, projects: string[]): string | null 
   }
   return best;
 }
+
+/** True iff the task's project is `name` or a dotted child of it (`name.x`). */
+export function belongsToProject(taskProject: string | undefined, name: string): boolean {
+  if (taskProject === undefined || name === "") return false;
+  return taskProject === name || taskProject.startsWith(`${name}.`);
+}
