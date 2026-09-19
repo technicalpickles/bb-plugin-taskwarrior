@@ -20,7 +20,7 @@ If no Taskwarrior project has that name, the section shows a warning with a pick
 
 ## Agent-touched tasks
 
-When an agent runs `taskwarrior_run`, tasks it names by id or uuid, plus any task it creates with `add`, land in that thread's Recent with an "agent" badge and the tab updates live. Report output (`list`, `export`) does not count. Recording is best-effort and never fails the command.
+When an agent runs `taskwarrior_run`, tasks whose id or uuid leads the command (`12 done`, not `done 12`), plus any task it creates with `add`, land in that thread's Recent with an "agent" badge and the tab updates live. Report output (`list`, `export`) does not count. Recording is best-effort and never fails the command.
 
 ## State
 
@@ -31,7 +31,7 @@ Thread state (pins, recent, searches) and project links live in plugin storage (
 - `server.ts`: `task` runner, RPC methods, `bb tw`, `taskwarrior_run`, realtime signals.
 - `contract.ts`: shared RPC contract and schemas (browser-safe).
 - `app.tsx`: slot registrations.
-- `components/tasks/`: the page (`TaskList`, `TaskDetail`).
+- `components/tasks/`: the page (`TaskList`), plus `TaskDetail`, which the thread tab reuses.
 - `components/thread-panel/`: the thread tab.
 - `lib/`: pure models (thread state, project link, task refs, palette rows, formatters).
 - `PLUGIN_OVERVIEW.md`: the store listing text. See [Store listing](#store-listing).

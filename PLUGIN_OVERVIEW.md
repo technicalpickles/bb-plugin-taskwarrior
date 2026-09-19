@@ -13,6 +13,6 @@ The Project section looks for a Taskwarrior project with the same name as the BB
 
 ## For agents
 
-The `taskwarrior_run` tool runs `task` with any arguments. Tasks an agent names by id or uuid, or creates with `add`, show up in the thread's Recent list with an **agent** badge.
+The `taskwarrior_run` tool runs `task` with any arguments. Tasks whose id or uuid leads the command (`12 done`, not `done 12`), or that the agent creates with `add`, show up in the thread's Recent list with an **agent** badge.
 
 Everything runs against your local Taskwarrior data. No account or external service.

@@ -65,8 +65,9 @@ projects/<projectId> = { twProject: string | null }   // null/absent = use defau
     Taskwarrior project named `X`. Name mismatch, or nothing created yet?" with
     a picker (existing Taskwarrior projects, the closest name marked
     "(suggested)") and an "Add a task" button that creates the task and then
-    sets its project to `X`. The picker is a native `<select>` with no
-    preselection, since a native select cannot act on a preselected option.
+    sets its project to `X`. The picker is a native `<select>`; an existing
+    override is shown as selected, but the suggestion is never preselected,
+    since a native select cannot act on a preselected option.
   - **Project exists, nothing pending:** neutral "All clear", not a warning.
   - **Project exists with pending tasks:** the list.
 - No UI clears an override yet; `project_link_set` accepts `null`, but nothing
@@ -103,12 +104,19 @@ server can attribute agent calls to a thread and append to that thread's
 `recent` with `by: "agent"`.
 
 - **What counts:** tasks the agent explicitly touched, meaning integer IDs or
-  UUIDs named in `args` (`["12", "done"]`, `["modify", "<uuid>", ...]`), plus
+  UUIDs that LEAD the argv (`extractTaskRefs` in `lib/task-refs.ts`), plus
   the task created by `add` (parsed from `Created task N.`). Report output
   (`list`, `export`) does not count; a listing would flood Recent with noise.
-  Read-only commands that name a ref (e.g. `info 12`) also record it.
+  - Recorded: `["12","done"]`, `["12","info"]`, `["<uuid>","modify","priority:H"]`,
+    `["1,2","done"]`. Filter tokens (`project:home`, `+tag`) before the refs are
+    skipped.
+  - Not recorded: `["info","12"]`, `["modify","12",...]` (refs after a bare
+    command word), and anything starting with `log`. `add` records only the
+    task it creates.
+  - There is no read-only exclusion: `["12","info"]` records too.
+  - Refs are capped at 50, and nothing is recorded unless `task` exits 0.
 - **Resolve before running:** integer IDs become invalid after `done`/`delete`,
-  so resolve refs to UUIDs (`task <refs> _uuids`) *before* executing, and
+  so resolve refs to UUIDs (a `task export` lookup) *before* executing, and
   resolve `add`'s new ID *after*. Store UUIDs only.
 - **Never fail the tool call:** the recording is best-effort, wrapped in
   try/catch and logged. A storage error must not turn a successful `task`
