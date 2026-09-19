@@ -67,7 +67,9 @@ export function ThreadPanel({
             placeholder="Search tasks"
             aria-label="Search tasks"
             onKeyDown={(event) => {
-              if (event.key === "Enter") void thread.recordSearch(query);
+              if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+              const trimmed = query.trim();
+              if (trimmed !== "") void thread.recordSearch(trimmed);
             }}
           />
         </div>

@@ -163,7 +163,10 @@ describe("ThreadPanel recent section", () => {
     await waitFor(() => view.getByText("Agent did this"));
     fireEvent.click(view.getAllByLabelText(/^pin$/i)[0]);
     await waitFor(() =>
-      expect(view.inspection.rpcCalls.some((c) => c.method === "thread_pin")).toBe(true),
+      expect(view.inspection.rpcCalls.find((c) => c.method === "thread_pin")?.input).toEqual({
+        threadId: "t1",
+        uuid: A,
+      }),
     );
   });
 
@@ -232,6 +235,44 @@ describe("ThreadPanel search", () => {
       expect(
         view.inspection.rpcCalls.find((c) => c.method === "thread_record_search")?.input,
       ).toEqual({ threadId: "t1", query: "milk" }),
+    );
+  });
+
+  const enterPanel = () =>
+    panel({
+      thread_get: () => ({ state: { pins: [], recent: [], searches: [] } }),
+      tasks_list: () => ({ tasks: [task(A, "Buy milk")] }),
+      thread_record_search: () => ({ ok: true }),
+    });
+  const recorded = (view: ReturnType<typeof enterPanel>) =>
+    view.inspection.rpcCalls.filter((c) => c.method === "thread_record_search");
+
+  it("does not record a search on Enter with an empty box", async () => {
+    const view = enterPanel();
+    await waitFor(() =>
+      expect(view.inspection.rpcCalls.some((c) => c.method === "thread_get")).toBe(true),
+    );
+    fireEvent.keyDown(view.getByLabelText("Search tasks"), { key: "Enter" });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(recorded(view)).toEqual([]);
+  });
+
+  it("does not record a search on Enter with whitespace only", async () => {
+    const view = enterPanel();
+    const input = view.getByLabelText("Search tasks");
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(recorded(view)).toEqual([]);
+  });
+
+  it("records the trimmed query on Enter", async () => {
+    const view = enterPanel();
+    const input = view.getByLabelText("Search tasks");
+    fireEvent.change(input, { target: { value: "  milk " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() =>
+      expect(recorded(view).map((c) => c.input)).toEqual([{ threadId: "t1", query: "milk" }]),
     );
   });
 
