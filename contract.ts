@@ -53,6 +53,18 @@ export const threadStateSchema = z.object({
 });
 export type ThreadState = z.infer<typeof threadStateSchema>;
 
+// Stored uuids are replayed into `task` argv by every client, so they are
+// validated at the door. Deliberately permissive rather than `z.uuid()`:
+// Taskwarrior does not enforce RFC 4122 version/variant bits, so a real task
+// uuid can fail a strict check. This only has to exclude anything that could
+// act as a filter token or command word.
+const uuidToken = z
+  .string()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, "not a task uuid");
+
+const PIN_CAP = 200;
+const QUERY_MAX = 200;
+
 export const rpcContract = defineRpcContract({
   tasks_list: {
     // `filter` is a list of Taskwarrior filter tokens (e.g. "project:home",
@@ -96,23 +108,23 @@ export const rpcContract = defineRpcContract({
     output: z.object({ state: threadStateSchema }),
   },
   thread_pin: {
-    input: z.object({ threadId: z.string(), uuid: z.string() }),
+    input: z.object({ threadId: z.string(), uuid: uuidToken }),
     output: z.object({ state: threadStateSchema }),
   },
   thread_unpin: {
-    input: z.object({ threadId: z.string(), uuid: z.string() }),
+    input: z.object({ threadId: z.string(), uuid: uuidToken }),
     output: z.object({ state: threadStateSchema }),
   },
   thread_reorder_pins: {
-    input: z.object({ threadId: z.string(), order: z.array(z.string()) }),
+    input: z.object({ threadId: z.string(), order: z.array(uuidToken).max(PIN_CAP) }),
     output: z.object({ state: threadStateSchema }),
   },
   thread_record_view: {
-    input: z.object({ threadId: z.string(), uuid: z.string() }),
+    input: z.object({ threadId: z.string(), uuid: uuidToken }),
     output: z.object({ ok: z.boolean() }),
   },
   thread_record_search: {
-    input: z.object({ threadId: z.string(), query: z.string() }),
+    input: z.object({ threadId: z.string(), query: z.string().max(QUERY_MAX) }),
     output: z.object({ ok: z.boolean() }),
   },
   project_link_get: {

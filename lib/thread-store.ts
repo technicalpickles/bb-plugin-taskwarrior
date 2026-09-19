@@ -1,7 +1,7 @@
 // KV-backed persistence for thread and project UI state. Mutations are
 // read-modify-write, so they are serialized per key to avoid lost updates
 // when the panel fires several RPCs at once.
-import type { ThreadState } from "../contract";
+import { threadStateSchema, type ThreadState } from "../contract";
 import {
   emptyThreadState,
   pin,
@@ -36,8 +36,13 @@ export function createThreadStore(
     return next;
   }
 
+  // A corrupt or legacy record must not wedge thread_get: parse it, and fall
+  // back to an empty state the next mutation will overwrite cleanly.
   async function load(threadId: string): Promise<ThreadState> {
-    return (await kv.get<ThreadState>(threadKey(threadId))) ?? emptyThreadState();
+    const record = await kv.get<unknown>(threadKey(threadId));
+    if (record === undefined) return emptyThreadState();
+    const parsed = threadStateSchema.safeParse(record);
+    return parsed.success ? parsed.data : emptyThreadState();
   }
 
   function mutate(threadId: string, change: (state: ThreadState) => ThreadState) {

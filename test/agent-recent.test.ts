@@ -88,4 +88,48 @@ describe("taskwarrior_run feeds Recent", () => {
       host.harness.inspection.logEntries.some((e) => e.level === "warn" && e.message.includes("boom")),
     ).toBe(true);
   });
+
+  it("still publishes when the thread store write fails", async () => {
+    const host = await boot([{ uuid: A, description: "a", status: "pending" }]);
+    hosts.push(host);
+    vi.spyOn(host.bb.storage.kv, "set").mockRejectedValue(new Error("boom"));
+    const result = await run(host, ["1", "done"]);
+    expect(result.isError).toBeFalsy();
+    expect(changed(host)).toHaveLength(1);
+  });
+});
+
+describe("taskwarrior_run publishes for every mutation", () => {
+  it("publishes once for a filter-led modify and records nothing", async () => {
+    const host = await boot([{ uuid: A, description: "a", status: "pending", project: "home" }]);
+    hosts.push(host);
+    const result = await run(host, ["project:home", "modify", "priority:H"]);
+    expect(result.isError).toBeFalsy();
+    expect(changed(host)).toHaveLength(1);
+    expect(await recent(host)).toEqual([]);
+  });
+
+  it("publishes for a tag-led done", async () => {
+    const host = await boot([{ uuid: A, description: "a", status: "pending" }]);
+    hosts.push(host);
+    const result = await run(host, ["+urgent", "done"]);
+    expect(result.isError).toBeFalsy();
+    expect(changed(host)).toHaveLength(1);
+  });
+
+  it("publishes for undo, which names no task at all", async () => {
+    const host = await boot([{ uuid: A, description: "a", status: "pending" }]);
+    hosts.push(host);
+    const result = await run(host, ["undo"]);
+    expect(result.isError).toBeFalsy();
+    expect(changed(host)).toHaveLength(1);
+  });
+
+  it("publishes nothing when the command fails", async () => {
+    const host = await boot([{ uuid: A, description: "a", status: "pending" }]);
+    hosts.push(host);
+    const result = await run(host, ["purge"]);
+    expect(result.isError).toBe(true);
+    expect(changed(host)).toHaveLength(0);
+  });
 });

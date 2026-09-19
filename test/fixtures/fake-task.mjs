@@ -40,6 +40,24 @@ if (command === "export") {
   for (const t of target) db.tasks.find((x) => x.uuid === t.uuid).status = "completed";
   save();
   process.stdout.write(`Completed ${target.length} task(s).\n`);
+} else if (args.includes("modify")) {
+  const at = args.indexOf("modify");
+  const target = withIds().filter((t) => matches(t, args.slice(0, at)));
+  for (const t of target) {
+    const row = db.tasks.find((x) => x.uuid === t.uuid);
+    for (const token of args.slice(at + 1)) {
+      const sep = token.indexOf(":");
+      if (sep === -1) continue;
+      const key = token.slice(0, sep);
+      const value = token.slice(sep + 1);
+      if (value === "") delete row[key];
+      else row[key] = value;
+    }
+  }
+  save();
+  process.stdout.write(`Modified ${target.length} task(s).\n`);
+} else if (args[0] === "undo") {
+  process.stdout.write("Undo complete.\n");
 } else if (command === "_projects") {
   const names = new Set(
     withIds().filter((t) => t.status === "pending" && t.project).map((t) => t.project),

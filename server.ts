@@ -40,6 +40,34 @@ const NON_INTERACTIVE_OVERRIDES = [
 
 const TIMEOUT_MS = 20_000;
 
+// Taskwarrior command words that change data. Presence of one as an exact
+// argv token is what makes an agent call worth a realtime refresh: plenty of
+// mutations name no task at all (`undo`, `sync`) or lead with a filter
+// (`project:home modify priority:H`), so ref detection cannot stand in for
+// this. A description token that happens to equal one of these costs one
+// extra refresh, which is cheap; missing a mutation leaves a stale panel.
+const MUTATING_COMMANDS = new Set([
+  "add",
+  "modify",
+  "done",
+  "delete",
+  "start",
+  "stop",
+  "annotate",
+  "denotate",
+  "append",
+  "prepend",
+  "edit",
+  "purge",
+  "undo",
+  "import",
+  "duplicate",
+  "sync",
+  "log",
+]);
+
+const mutates = (args: string[]) => args.some((token) => MUTATING_COMMANDS.has(token));
+
 export default async function plugin(bb: BbPluginApi) {
   bb.log.info("loaded");
 
@@ -207,9 +235,8 @@ export default async function plugin(bb: BbPluginApi) {
       if (result.exitCode !== 0) {
         throw new Error(result.stderr || "task add failed");
       }
-      const match = /Created task (\d+)\./.exec(result.stdout);
-      const task =
-        match !== null ? (await exportTasks([match[1]]))[0] ?? null : null;
+      const created = parseCreatedTaskId(result.stdout);
+      const task = created !== null ? (await exportTasks([created]))[0] ?? null : null;
       bb.realtime.publish(TASKS_CHANGED, { reason: "add" });
       return { task };
     },
@@ -324,6 +351,17 @@ export default async function plugin(bb: BbPluginApi) {
 
       const result = await runTask(args);
 
+      // Refresh first and independently: a mutation the panel never hears
+      // about is worse than a duplicate refresh, and recording is a separate
+      // best-effort concern that must not gate it.
+      if (result.exitCode === 0 && mutates(args)) {
+        try {
+          bb.realtime.publish(TASKS_CHANGED, { reason: "agent" });
+        } catch (error) {
+          bb.log.warn(`recent: could not publish a change signal: ${String(error)}`);
+        }
+      }
+
       try {
         if (result.exitCode === 0 && args[0] === "add") {
           const created = parseCreatedTaskId(result.stdout);
@@ -331,7 +369,6 @@ export default async function plugin(bb: BbPluginApi) {
         }
         if (result.exitCode === 0 && touched.length > 0) {
           for (const uuid of touched) await threads.recordView(ctx.threadId, uuid, "agent");
-          bb.realtime.publish(TASKS_CHANGED, { reason: "agent" });
         }
       } catch (error) {
         bb.log.warn(`recent: could not record agent touches: ${String(error)}`);

@@ -51,6 +51,49 @@ describe("thread rpc", () => {
   });
 });
 
+describe("thread rpc input validation", () => {
+  it("rejects a non-uuid pin and stores nothing", async () => {
+    const host = await boot([]);
+    hosts.push(host);
+    const call = host.harness.behavior.callRpc;
+    await expect(call("thread_pin", { threadId: "t1", uuid: "project:home" })).rejects.toThrow();
+    expect(await call("thread_get", { threadId: "t1" })).toMatchObject({ state: { pins: [] } });
+  });
+
+  it("rejects a non-uuid unpin, recorded view, and reorder entry", async () => {
+    const host = await boot([]);
+    hosts.push(host);
+    const call = host.harness.behavior.callRpc;
+    await expect(call("thread_unpin", { threadId: "t1", uuid: "1" })).rejects.toThrow();
+    await expect(call("thread_record_view", { threadId: "t1", uuid: "-- rm" })).rejects.toThrow();
+    await expect(
+      call("thread_reorder_pins", { threadId: "t1", order: [A, "nope"] }),
+    ).rejects.toThrow();
+    expect(await call("thread_get", { threadId: "t1" })).toMatchObject({
+      state: { pins: [], recent: [] },
+    });
+  });
+
+  it("rejects an over-long recorded search", async () => {
+    const host = await boot([]);
+    hosts.push(host);
+    const call = host.harness.behavior.callRpc;
+    await expect(
+      call("thread_record_search", { threadId: "t1", query: "x".repeat(201) }),
+    ).rejects.toThrow();
+    expect(await call("thread_get", { threadId: "t1" })).toMatchObject({ state: { searches: [] } });
+  });
+
+  it("still accepts a real Taskwarrior uuid", async () => {
+    const host = await boot([]);
+    hosts.push(host);
+    const call = host.harness.behavior.callRpc;
+    expect(await call("thread_pin", { threadId: "t1", uuid: A })).toMatchObject({
+      state: { pins: [A] },
+    });
+  });
+});
+
 describe("project rpc", () => {
   it("round-trips a project link", async () => {
     const host = await boot([]);

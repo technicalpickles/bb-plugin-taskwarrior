@@ -46,6 +46,16 @@ describe("thread store", () => {
     expect(state.searches).toEqual([{ query: "milk", at: 555 }]);
   });
 
+  it("treats a corrupt stored record as an empty state and overwrites it", async () => {
+    const kv = fakeKv();
+    kv.data.set("threads/t1", { pins: "nope", junk: true });
+    const store = createThreadStore(kv, () => {}, () => 7);
+    expect(await store.get("t1")).toEqual({ pins: [], recent: [], searches: [] });
+    const next = await store.pin("t1", "u1");
+    expect(next).toEqual({ pins: ["u1"], recent: [], searches: [] });
+    expect(kv.data.get("threads/t1")).toEqual(next);
+  });
+
   it("stores project links without publishing", async () => {
     const kv = fakeKv();
     const publish = vi.fn();
