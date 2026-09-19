@@ -91,4 +91,44 @@ export const rpcContract = defineRpcContract({
     input: z.object({ id: z.number() }),
     output: z.object({ ok: z.boolean() }),
   },
+  thread_get: {
+    input: z.object({ threadId: z.string() }),
+    output: z.object({ state: threadStateSchema }),
+  },
+  thread_pin: {
+    input: z.object({ threadId: z.string(), uuid: z.string() }),
+    output: z.object({ state: threadStateSchema }),
+  },
+  thread_unpin: {
+    input: z.object({ threadId: z.string(), uuid: z.string() }),
+    output: z.object({ state: threadStateSchema }),
+  },
+  thread_reorder_pins: {
+    input: z.object({ threadId: z.string(), order: z.array(z.string()) }),
+    output: z.object({ state: threadStateSchema }),
+  },
+  thread_record_view: {
+    input: z.object({ threadId: z.string(), uuid: z.string() }),
+    output: z.object({ ok: z.boolean() }),
+  },
+  thread_record_search: {
+    input: z.object({ threadId: z.string(), query: z.string() }),
+    output: z.object({ ok: z.boolean() }),
+  },
+  project_link_get: {
+    input: z.object({ projectId: z.string() }),
+    output: z.object({ twProject: z.string().nullable() }),
+  },
+  project_link_set: {
+    input: z.object({ projectId: z.string(), twProject: z.string().nullable() }),
+    output: z.object({ ok: z.boolean() }),
+  },
+  project_status: {
+    input: z.object({ name: z.string() }),
+    output: z.object({ exists: z.boolean(), pending: z.number() }),
+  },
+  tw_projects_list: {
+    input: z.object({}),
+    output: z.object({ projects: z.array(z.string()) }),
+  },
 });

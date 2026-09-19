@@ -14,7 +14,14 @@ import {
   type BbPluginApi,
 } from "@get-bb/plugin-sdk";
 import { z } from "zod";
-import { rpcContract, taskRecordSchema, TASKS_CHANGED, type TaskRecord } from "./contract";
+import {
+  rpcContract,
+  taskRecordSchema,
+  TASKS_CHANGED,
+  THREAD_STATE_CHANGED,
+  type TaskRecord,
+} from "./contract";
+import { createThreadStore } from "./lib/thread-store";
 
 const execFileAsync = promisify(execFile);
 
@@ -138,7 +145,47 @@ export default async function plugin(bb: BbPluginApi) {
     });
   }
 
+  const threads = createThreadStore(bb.storage.kv, (threadId) =>
+    bb.realtime.publish(THREAD_STATE_CHANGED, { threadId }),
+  );
+
   bb.rpc.register(rpcContract, {
+    thread_get: async ({ threadId }) => ({ state: await threads.get(threadId) }),
+    thread_pin: async ({ threadId, uuid }) => ({ state: await threads.pin(threadId, uuid) }),
+    thread_unpin: async ({ threadId, uuid }) => ({ state: await threads.unpin(threadId, uuid) }),
+    thread_reorder_pins: async ({ threadId, order }) => ({
+      state: await threads.reorder(threadId, order),
+    }),
+    thread_record_view: async ({ threadId, uuid }) => {
+      await threads.recordView(threadId, uuid);
+      return { ok: true };
+    },
+    thread_record_search: async ({ threadId, query }) => {
+      await threads.recordSearch(threadId, query);
+      return { ok: true };
+    },
+    project_link_get: async ({ projectId }) => ({
+      twProject: await threads.getProjectLink(projectId),
+    }),
+    project_link_set: async ({ projectId, twProject }) => {
+      await threads.setProjectLink(projectId, twProject);
+      return { ok: true };
+    },
+    project_status: async ({ name }) => {
+      const tasks = await exportTasks([`project:${name}`]);
+      return {
+        exists: tasks.length > 0,
+        pending: tasks.filter((task) => task.status === "pending").length,
+      };
+    },
+    tw_projects_list: async () => {
+      const result = await runTask(["_projects"]);
+      const projects =
+        result.exitCode === 0
+          ? [...new Set(result.stdout.split("\n").map((line) => line.trim()).filter(Boolean))].sort()
+          : [];
+      return { projects };
+    },
     tasks_list: async ({ filter }) => ({ tasks: await attachBlockedBy(await exportTasks(filter)) }),
     tasks_get: async ({ id }) => {
       const [task] = await attachBlockedBy(await exportTasks([String(id)]));
