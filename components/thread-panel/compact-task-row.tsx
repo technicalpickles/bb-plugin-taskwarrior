@@ -9,8 +9,10 @@ import { COARSE_POINTER_COMPACT_ICON_BUTTON_CLASS } from "@/components/ui/coarse
 import { isOverdue, priorityLabel, priorityVariant } from "../../lib/task-format";
 
 export interface CompactTaskRowProps {
-  uuid: string;
   task: TaskRecord | undefined;
+  /** True while this row's uuid is still being fetched: show a placeholder
+   * instead of claiming the task is gone. */
+  loading?: boolean;
   pinned?: boolean;
   badge?: ReactNode;
   onOpen?: () => void;
@@ -50,6 +52,13 @@ function IconAction({
 export function CompactTaskRow(props: CompactTaskRowProps) {
   const { task, pinned, badge } = props;
   if (task === undefined) {
+    if (props.loading) {
+      return (
+        <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
+          <span className="flex-1">Loading…</span>
+        </div>
+      );
+    }
     return (
       <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
         <span className="flex-1">Task no longer exists</span>

@@ -5,11 +5,13 @@ import { CompactTaskRow } from "./compact-task-row";
 export function RecentSection({
   state,
   tasks,
+  resolved,
   pinnedUuids,
   actions,
 }: {
   state: ThreadState;
   tasks: Map<string, TaskRecord>;
+  resolved: Set<string>;
   pinnedUuids: string[];
   actions: { open(task: TaskRecord): void; togglePin(uuid: string): void; rerun(query: string): void };
 }) {
@@ -35,8 +37,8 @@ export function RecentSection({
           return (
             <CompactTaskRow
               key={entry.uuid}
-              uuid={entry.uuid}
               task={task}
+              loading={task === undefined && !resolved.has(entry.uuid)}
               pinned={pinnedUuids.includes(entry.uuid)}
               badge={
                 <Pill variant={entry.by === "agent" ? "emphasis" : "secondary"} size="sm">

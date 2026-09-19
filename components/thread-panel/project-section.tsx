@@ -143,7 +143,6 @@ function ProjectTasks({
       {tasks.map((task) => (
         <CompactTaskRow
           key={task.uuid}
-          uuid={task.uuid}
           task={task}
           pinned={pinnedUuids.includes(task.uuid)}
           onOpen={() => actions.open(task)}

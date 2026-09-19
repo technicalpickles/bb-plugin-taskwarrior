@@ -11,11 +11,12 @@ export interface PinnedActions {
 export function PinnedSection({
   state,
   tasks,
+  resolved,
   actions,
 }: {
-  threadId?: string;
   state: ThreadState;
   tasks: Map<string, TaskRecord>;
+  resolved: Set<string>;
   actions: PinnedActions;
 }) {
   if (state.pins.length === 0) {
@@ -36,11 +37,12 @@ export function PinnedSection({
     <div className="divide-y divide-border">
       {state.pins.map((uuid, index) => {
         const task = tasks.get(uuid);
+        const loading = task === undefined && !resolved.has(uuid);
         return (
           <CompactTaskRow
             key={uuid}
-            uuid={uuid}
             task={task}
+            loading={loading}
             pinned
             onOpen={task ? () => actions.open(task) : undefined}
             onComplete={task ? () => actions.complete(task) : undefined}

@@ -3,6 +3,7 @@ import { fireEvent, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
+import { TASKS_CHANGED } from "../contract";
 import { ThreadPanel } from "../components/thread-panel/thread-panel";
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
@@ -604,6 +605,171 @@ describe("ThreadPanel project section fix round 1", () => {
   });
 });
 
+describe("ThreadPanel uuid map stability", () => {
+  const settle = () => new Promise((r) => setTimeout(r, 20));
+
+  it("pinning a project row keeps the Project section mounted and expanded", async () => {
+    const projectTask = { ...task(A, "Project task"), project: "bb-plugin-taskwarrior" };
+    let pins: string[] = [];
+    const view = projectPanel({
+      thread_get: () => ({ state: { pins, recent: [], searches: [] } }),
+      project_status: () => ({ exists: true, pending: 1 }),
+      tasks_list: (input: { filter: string[] }) =>
+        input.filter.includes("project:bb-plugin-taskwarrior") || input.filter.includes(A)
+          ? { tasks: [projectTask] }
+          : { tasks: [] },
+      thread_pin: () => {
+        pins = [A];
+        return { state: { pins, recent: [], searches: [] } };
+      },
+    });
+    fireEvent.click(await view.findByText("Project"));
+    await waitFor(() => view.getByText("Project task"));
+    const count = (method: string) =>
+      view.inspection.rpcCalls.filter((c) => c.method === method).length;
+    const projectsBefore = count("tw_projects_list");
+    const statusBefore = count("project_status");
+    const linkBefore = count("project_link_get");
+    fireEvent.click(view.getByLabelText(/^pin$/i));
+    await waitFor(() =>
+      expect(view.inspection.rpcCalls.some((c) => c.method === "thread_pin")).toBe(true),
+    );
+    await settle();
+    // The Project section must not unmount: the row is still there, still expanded.
+    expect(view.getAllByText("Project task").length).toBeGreaterThan(0);
+    expect(count("tw_projects_list")).toBe(projectsBefore);
+    expect(count("project_status")).toBe(statusBefore);
+    expect(count("project_link_get")).toBe(linkBefore);
+  });
+
+  it("shows a Loading row for an unresolved uuid, never 'no longer exists'", async () => {
+    const projectTask = { ...task(A, "Project task"), project: "bb-plugin-taskwarrior" };
+    let pins: string[] = [];
+    let resolvePins!: (value: unknown) => void;
+    const pinFetch = new Promise((r) => {
+      resolvePins = r;
+    });
+    const view = projectPanel({
+      thread_get: () => ({ state: { pins, recent: [], searches: [] } }),
+      project_status: () => ({ exists: true, pending: 1 }),
+      tasks_list: (input: { filter: string[] }) => {
+        if (input.filter.includes("project:bb-plugin-taskwarrior")) return { tasks: [projectTask] };
+        if (input.filter.includes(A)) return pinFetch;
+        return { tasks: [] };
+      },
+      thread_pin: () => {
+        pins = [A];
+        return { state: { pins, recent: [], searches: [] } };
+      },
+    });
+    fireEvent.click(await view.findByText("Project"));
+    await waitFor(() => view.getByText("Project task"));
+    fireEvent.click(view.getByLabelText(/^pin$/i));
+    await waitFor(() => view.getByText(/loading/i));
+    expect(view.queryByText(/no longer exists/i)).toBeNull();
+    resolvePins({ tasks: [projectTask] });
+    await waitFor(() => expect(view.getAllByText("Project task")).toHaveLength(2));
+    expect(view.queryByText(/no longer exists/i)).toBeNull();
+    expect(view.queryByText(/loading/i)).toBeNull();
+  });
+
+  it("keeps the newest uuid fetch when responses resolve out of order", async () => {
+    const deferred: ((value: unknown) => void)[] = [];
+    let calls = 0;
+    const view = panel({
+      thread_get: () => ({ state: { pins: [A], recent: [], searches: [] } }),
+      tasks_list: () => {
+        calls += 1;
+        if (calls === 1) return { tasks: [task(A, "First")] };
+        return new Promise((r) => deferred.push(r));
+      },
+    });
+    await waitFor(() => view.getByText("First"));
+    await view.behavior.emitRealtime(TASKS_CHANGED, { reason: "test" });
+    await view.behavior.emitRealtime(TASKS_CHANGED, { reason: "test" });
+    await waitFor(() => expect(deferred).toHaveLength(2));
+    deferred[1]({ tasks: [task(A, "Newest")] });
+    await waitFor(() => view.getByText("Newest"));
+    deferred[0]({ tasks: [task(A, "Stale")] });
+    await settle();
+    expect(view.queryByText("Stale")).toBeNull();
+    expect(view.getByText("Newest")).toBeTruthy();
+  });
+
+  it("reordering pins does not refetch tasks_list", async () => {
+    let pins = [A, B];
+    const view = panel({
+      thread_get: () => ({ state: { pins, recent: [], searches: [] } }),
+      tasks_list: () => ({ tasks: [task(A, "Write plan"), task(B, "Ship it", "pending", 2)] }),
+      thread_reorder_pins: (input: { order: string[] }) => {
+        pins = input.order;
+        return { state: { pins, recent: [], searches: [] } };
+      },
+    });
+    await waitFor(() => view.getByText("Write plan"));
+    const before = view.inspection.rpcCalls.filter((c) => c.method === "tasks_list").length;
+    fireEvent.click(view.getAllByLabelText(/move down/i)[0]);
+    await waitFor(() =>
+      expect(view.inspection.rpcCalls.some((c) => c.method === "thread_reorder_pins")).toBe(true),
+    );
+    await settle();
+    expect(view.inspection.rpcCalls.filter((c) => c.method === "tasks_list")).toHaveLength(before);
+  });
+
+  it("toasts instead of swallowing a failed unpin", async () => {
+    vi.mocked(toast.error).mockClear();
+    const view = panel({
+      thread_get: () => ({ state: { pins: [A], recent: [], searches: [] } }),
+      tasks_list: () => ({ tasks: [task(A, "Write plan")] }),
+      thread_unpin: () => Promise.reject(new Error("boom")),
+    });
+    await waitFor(() => view.getByText("Write plan"));
+    fireEvent.click(view.getByLabelText(/^unpin$/i));
+    await waitFor(() =>
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith("Could not update pins"),
+    );
+  });
+});
+
+describe("ThreadPanel project section readiness", () => {
+  const noProjectPanel = (options: object) =>
+    renderSlot(
+      { component: ThreadPanel },
+      { threadId: "t1", params: null } as any,
+      {
+        rpc: {
+          thread_get: () => ({ state: { pins: [], recent: [], searches: [] } }),
+          tasks_list: () => ({ tasks: [] }),
+          project_link_get: () => ({ twProject: null }),
+          tw_projects_list: () => ({ projects: ["home"] }),
+          project_status: () => ({ exists: false, pending: 0 }),
+        } as any,
+        ...options,
+      },
+    );
+
+  it("renders no Project section for a thread with no project", async () => {
+    const view = noProjectPanel({
+      context: { projectId: null, threadId: "t1" },
+      ...projectOpts(),
+    });
+    await waitFor(() => view.getByText("Recent"));
+    expect(view.queryByText("Project")).toBeNull();
+    expect(view.queryByLabelText(/link a taskwarrior project/i)).toBeNull();
+    expect(view.inspection.rpcCalls.some((c) => c.method === "tw_projects_list")).toBe(false);
+  });
+
+  it("renders no Project section until the sidebar threads are ready", async () => {
+    const view = noProjectPanel({
+      context: { projectId: "p1", threadId: "t1" },
+      sidebarThreads: { status: "loading" as const },
+    });
+    await waitFor(() => view.getByText("Recent"));
+    expect(view.queryByText("Project")).toBeNull();
+    expect(view.queryByLabelText(/link a taskwarrior project/i)).toBeNull();
+  });
+});
+
 describe("ThreadPanel modes", () => {
   const empty = { state: { pins: [], recent: [], searches: [] } };
 
@@ -676,6 +842,89 @@ describe("ThreadPanel modes", () => {
     fireEvent.submit(input.closest("form")!);
     await new Promise((r) => setTimeout(r, 20));
     expect(view.inspection.rpcCalls.some((c) => c.method === "tasks_add")).toBe(false);
+  });
+});
+
+describe("ThreadPanel mode exit", () => {
+  const seeded = {
+    state: { pins: [A], recent: [{ uuid: B, at: 1, by: "user" as const }], searches: [] },
+  };
+
+  it("pin mode offers Done, which brings back the Pinned and Recent sections", async () => {
+    const view = panel(
+      { thread_get: () => seeded, tasks_list: () => ({ tasks: [task(A, "Pickable")] }) },
+      { mode: "pin" },
+    );
+    await waitFor(() => view.getByText("Pickable"));
+    expect(view.queryByText("Pinned")).toBeNull();
+    fireEvent.click(view.getByRole("button", { name: /^done$/i }));
+    await waitFor(() => view.getByText("Pinned"));
+    expect(view.getByText("Recent")).toBeTruthy();
+    expect(view.queryByText(/pick a task to pin/i)).toBeNull();
+    expect(view.queryByRole("button", { name: /^done$/i })).toBeNull();
+  });
+
+  it("add mode Done hides the add form", async () => {
+    const view = panel(
+      { thread_get: () => seeded, tasks_list: () => ({ tasks: [task(A, "Pickable")] }) },
+      { mode: "add" },
+    );
+    await view.findByLabelText("New task description");
+    fireEvent.click(view.getByRole("button", { name: /^done$/i }));
+    await waitFor(() => expect(view.queryByLabelText("New task description")).toBeNull());
+    expect(view.getByText("Pinned")).toBeTruthy();
+  });
+
+  it("shows no Done control without a mode param", async () => {
+    const view = panel(
+      { thread_get: () => seeded, tasks_list: () => ({ tasks: [task(A, "Pickable")] }) },
+      null,
+    );
+    await waitFor(() => view.getByText("Pinned"));
+    expect(view.queryByRole("button", { name: /^done$/i })).toBeNull();
+  });
+});
+
+describe("ThreadPanel records what it opens", () => {
+  it("records the task created in add mode so it lands in Recent", async () => {
+    const view = panel(
+      {
+        thread_get: () => ({ state: { pins: [], recent: [], searches: [] } }),
+        tasks_list: () => ({ tasks: [] }),
+        tasks_add: () => ({ task: task(A, "New") }),
+        thread_record_view: () => ({ ok: true }),
+      },
+      { mode: "add" },
+    );
+    const input = (await view.findByLabelText("New task description")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "New" } });
+    fireEvent.submit(input.closest("form")!);
+    await waitFor(() =>
+      expect(
+        view.inspection.rpcCalls.find((c) => c.method === "thread_record_view")?.input,
+      ).toEqual({ threadId: "t1", uuid: A }),
+    );
+  });
+
+  it("records a blocker opened from the detail view", async () => {
+    const blocked = { ...task(A, "Blocked thing"), blockedBy: [{ id: 9, description: "Blocker" }] };
+    const view = panel({
+      thread_get: () => ({ state: { pins: [A], recent: [], searches: [] } }),
+      tasks_list: () => ({ tasks: [blocked] }),
+      tasks_get: (input: { id: number }) =>
+        input.id === 9 ? { task: task(B, "Blocker", "pending", 9) } : { task: blocked },
+      thread_record_view: () => ({ ok: true }),
+    });
+    await waitFor(() => view.getByText("Blocked thing"));
+    fireEvent.click(view.getByText("Blocked thing"));
+    fireEvent.click(await view.findByText(/#9 Blocker/));
+    await waitFor(() =>
+      expect(
+        view.inspection.rpcCalls.some(
+          (c) => c.method === "thread_record_view" && (c.input as any).uuid === B,
+        ),
+      ).toBe(true),
+    );
   });
 });
 
