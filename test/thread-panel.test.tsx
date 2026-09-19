@@ -1,8 +1,11 @@
 // @vitest-environment jsdom
 import { fireEvent, waitFor } from "@testing-library/react";
 import { renderSlot } from "@get-bb/plugin-sdk/testing/app";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
 import { ThreadPanel } from "../components/thread-panel/thread-panel";
+
+vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -471,5 +474,107 @@ describe("ThreadPanel project section", () => {
     fireEvent.click(await view.findByText("Project"));
     await view.findByLabelText(/link a taskwarrior project/i);
     expect(view.inspection.rpcCalls.some((c) => c.method === "project_status")).toBe(false);
+  });
+});
+
+describe("ThreadPanel project section fix round 1", () => {
+  const missing = { project_status: () => ({ exists: false, pending: 0 }) };
+  async function openAdd(view: ReturnType<typeof projectPanel>, text = "New thing") {
+    fireEvent.click(await view.findByText("Project"));
+    fireEvent.click(await view.findByRole("button", { name: /add a task/i }));
+    const input = view.getByLabelText(/new task description/i) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: text } });
+    return input;
+  }
+  const errors = () => vi.mocked(toast.error);
+
+  it("keeps the input and toasts when tasks_add rejects", async () => {
+    errors().mockClear();
+    const view = projectPanel({
+      ...missing,
+      tasks_add: () => Promise.reject(new Error("boom")),
+    });
+    const input = await openAdd(view);
+    fireEvent.click(view.getByRole("button", { name: /^add$/i }));
+    await waitFor(() => expect(errors()).toHaveBeenCalled());
+    expect(input.value).toBe("New thing");
+  });
+
+  it("keeps the input and toasts when tasks_add returns no task", async () => {
+    errors().mockClear();
+    const view = projectPanel({ ...missing, tasks_add: () => ({ task: null }) });
+    const input = await openAdd(view);
+    fireEvent.click(view.getByRole("button", { name: /^add$/i }));
+    await waitFor(() => expect(errors()).toHaveBeenCalled());
+    expect(input.value).toBe("New thing");
+  });
+
+  it("toasts and closes the input when setting the project fails", async () => {
+    errors().mockClear();
+    const view = projectPanel({
+      ...missing,
+      tasks_add: () => ({ task: task(A, "New thing", "pending", 7) }),
+      tasks_modify: () => Promise.reject(new Error("boom")),
+    });
+    await openAdd(view);
+    fireEvent.click(view.getByRole("button", { name: /^add$/i }));
+    await waitFor(() => expect(errors()).toHaveBeenCalled());
+    await waitFor(() => expect(view.queryByLabelText(/new task description/i)).toBeNull());
+  });
+
+  it("ignores a second submit while the first is in flight", async () => {
+    let resolve!: (value: unknown) => void;
+    const pending = new Promise((r) => {
+      resolve = r;
+    });
+    const view = projectPanel({
+      ...missing,
+      tasks_add: () => pending,
+      tasks_modify: () => ({ ok: true, task: null }),
+    });
+    const input = await openAdd(view);
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(view.getByRole("button", { name: /^add$/i }));
+    resolve({ task: task(A, "New thing", "pending", 7) });
+    await waitFor(() => expect(view.queryByLabelText(/new task description/i)).toBeNull());
+    expect(view.inspection.rpcCalls.filter((c) => c.method === "tasks_add")).toHaveLength(1);
+  });
+
+  it("does not show the old project's rows under a newly linked project", async () => {
+    let resolveWork!: (value: unknown) => void;
+    const work = new Promise((r) => {
+      resolveWork = r;
+    });
+    const view = projectPanel({
+      project_link_get: () => ({ twProject: "home" }),
+      tw_projects_list: () => ({ projects: ["home", "work"] }),
+      project_link_set: () => ({ ok: true }),
+      project_status: () => ({ exists: true, pending: 1 }),
+      tasks_list: (input: { filter: string[] }) => {
+        if (input.filter.includes("project:home"))
+          return { tasks: [{ ...task(A, "Home task"), project: "home" }] };
+        if (input.filter.includes("project:work")) return work;
+        return { tasks: [] };
+      },
+    });
+    fireEvent.click(await view.findByText("Project"));
+    await waitFor(() => view.getByText("Home task"));
+    fireEvent.click(view.getByRole("button", { name: /change project/i }));
+    await waitFor(() => view.getByRole("option", { name: "work" }));
+    fireEvent.change(view.getByLabelText(/link a taskwarrior project/i), {
+      target: { value: "work" },
+    });
+    await waitFor(() =>
+      expect(
+        view.inspection.rpcCalls.some(
+          (c) => c.method === "tasks_list" && (c.input as any).filter.includes("project:work"),
+        ),
+      ).toBe(true),
+    );
+    expect(view.queryByText("Home task")).toBeNull();
+    resolveWork({ tasks: [{ ...task(B, "Work task", "pending", 2), project: "work" }] });
+    await waitFor(() => view.getByText("Work task"));
+    expect(view.queryByText("Home task")).toBeNull();
   });
 });

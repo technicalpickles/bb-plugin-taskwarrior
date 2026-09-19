@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import { rpcContract, TASKS_CHANGED, type TaskRecord } from "../../contract";
 import { Button } from "@/components/ui/button";
@@ -54,15 +55,36 @@ function AddTask({ project, onAdded }: { project: string; onAdded(): void }) {
   const rpc = useRpc<typeof rpcContract>();
   const [open, setOpen] = useState(false);
   const [description, setDescription] = useState("");
+  const [busy, setBusy] = useState(false);
 
   async function submit() {
     const trimmed = description.trim();
-    if (trimmed === "") return;
-    const { task } = await rpc.call("tasks_add", { description: trimmed });
-    if (task !== null) await rpc.call("tasks_modify", { id: task.id, project });
-    setDescription("");
-    setOpen(false);
-    onAdded();
+    if (trimmed === "" || busy) return;
+    setBusy(true);
+    try {
+      let added: TaskRecord | null;
+      try {
+        ({ task: added } = await rpc.call("tasks_add", { description: trimmed }));
+      } catch {
+        toast.error("Could not add the task");
+        return;
+      }
+      if (added === null) {
+        toast.error("Task was added but could not be read back");
+        return;
+      }
+      try {
+        const { ok } = await rpc.call("tasks_modify", { id: added.id, project });
+        if (!ok) toast.error("Task added, but could not set its project");
+      } catch {
+        toast.error("Task added, but could not set its project");
+      }
+      setDescription("");
+      setOpen(false);
+      onAdded();
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (!open) {
@@ -79,11 +101,12 @@ function AddTask({ project, onAdded }: { project: string; onAdded(): void }) {
         onChange={(event) => setDescription(event.target.value)}
         placeholder="Task description"
         aria-label="New task description"
+        disabled={busy}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.nativeEvent.isComposing) void submit();
         }}
       />
-      <Button size="sm" onClick={() => void submit()}>
+      <Button size="sm" disabled={busy} onClick={() => void submit()}>
         Add
       </Button>
     </div>
@@ -102,16 +125,25 @@ function ProjectTasks({
   const rpc = useRpc<typeof rpcContract>();
   const [tasks, setTasks] = useState<TaskRecord[] | null>(null);
 
+  const latest = useRef(0);
+
   async function refresh() {
+    const request = ++latest.current;
     const out = await rpc.call("tasks_list", {
       filter: ["status:pending", `project:${project}`],
     });
+    // Ignore responses that were superseded by a newer request or project.
+    if (request !== latest.current) return;
     // Taskwarrior's project: filter is a prefix match (home also returns homework).
     setTasks(out.tasks.filter((task) => belongsToProject(task.project, project)));
   }
 
   useEffect(() => {
+    setTasks(null);
     void refresh();
+    return () => {
+      latest.current++;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project]);
 
