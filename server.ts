@@ -22,6 +22,7 @@ import {
   type TaskRecord,
 } from "./contract";
 import { belongsToProject } from "./lib/project-link";
+import { extractTaskRefs, parseCreatedTaskId } from "./lib/task-refs";
 import { createThreadStore } from "./lib/thread-store";
 
 const execFileAsync = promisify(execFile);
@@ -125,6 +126,11 @@ export default async function plugin(bb: BbPluginApi) {
   // A blocker may not be in the caller's current filter/list, so it's
   // resolved with its own `task export` lookup rather than cross-referencing
   // the batch already in hand.
+  async function resolveUuids(refs: string[]): Promise<string[]> {
+    if (refs.length === 0) return [];
+    return (await exportTasks(refs)).map((task) => task.uuid);
+  }
+
   async function attachBlockedBy(tasks: TaskRecord[]): Promise<TaskRecord[]> {
     const blockerUuids = new Set<string>();
     for (const task of tasks) {
@@ -306,8 +312,31 @@ export default async function plugin(bb: BbPluginApi) {
           "Argv to pass to `task`, one token per array element (no shell quoting).",
         ),
     }),
-    async execute({ args }) {
+    async execute({ args }, ctx) {
+      // Resolve refs to UUIDs first: integer IDs are invalid once a task is
+      // completed or deleted, and we only ever store UUIDs.
+      let touched: string[] = [];
+      try {
+        touched = await resolveUuids(extractTaskRefs(args));
+      } catch (error) {
+        bb.log.warn(`recent: could not resolve refs: ${String(error)}`);
+      }
+
       const result = await runTask(args);
+
+      try {
+        if (result.exitCode === 0 && args[0] === "add") {
+          const created = parseCreatedTaskId(result.stdout);
+          if (created !== null) touched = touched.concat(await resolveUuids([created]));
+        }
+        if (result.exitCode === 0 && touched.length > 0) {
+          for (const uuid of touched) await threads.recordView(ctx.threadId, uuid, "agent");
+          bb.realtime.publish(TASKS_CHANGED, { reason: "agent" });
+        }
+      } catch (error) {
+        bb.log.warn(`recent: could not record agent touches: ${String(error)}`);
+      }
+
       const text = [result.stdout, result.stderr].filter(Boolean).join("\n");
       return {
         content: [{ type: "text", text: text || "(no output)" }],
