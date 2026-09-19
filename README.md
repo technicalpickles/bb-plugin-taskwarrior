@@ -4,11 +4,11 @@ A BB plugin for [Taskwarrior](https://taskwarrior.org). It runs your local `task
 
 - **Taskwarrior page** (sidebar, `app.slots.navPanel`): browse, sort, filter, group, edit, complete, and delete tasks.
 - **Tasks thread tab** (`app.slots.threadPanelAction`): thread-local views of your tasks.
-  - **Pinned**: tasks you pinned to this thread, reorderable with up/down buttons. Finished pins show struck through and can be cleared.
-  - **Project**: open tasks for the effective Taskwarrior project, collapsed by default.
+  - **Pinned**: tasks you pinned to this thread, reorderable with up/down buttons. Finished pins show struck through and stay put until you unpin them. A pin whose task is gone from Taskwarrior entirely gets a Clear button instead.
+  - **Project**: open tasks for the effective Taskwarrior project, collapsed by default. Threads with no BB project don't get this section.
   - **Recent**: tasks viewed in this thread and past searches, each marked "you" or "agent".
   - A search box on top. Enter records the search.
-- **Command palette rows**: `Tasks: find…` (opens the tab with search focused), `Tasks: add…`, `Tasks: pin to this thread`, and `Tasks: open this thread's tasks`. The last two need a thread.
+- **Command palette rows**: `Tasks: find…` (opens the tab with search focused), `Tasks: add…`, `Tasks: pin to this thread`, and `Tasks: open this thread's tasks`. The last two need a thread. The add and pin rows open the tab in a mode with a **Done** button; Done drops you back to the normal Pinned/Project/Recent view.
 - **`bb tw <args...>`**: forwards to `task`, so any filter, report, or command works.
 - **`taskwarrior_run` agent tool**: same argv as `task`. The bundled skill (`skills/taskwarrior/SKILL.md`) documents it.
 
