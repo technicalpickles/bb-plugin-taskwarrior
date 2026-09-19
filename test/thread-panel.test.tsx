@@ -541,6 +541,31 @@ describe("ThreadPanel project section fix round 1", () => {
     expect(view.inspection.rpcCalls.filter((c) => c.method === "tasks_add")).toHaveLength(1);
   });
 
+  it("holds the busy guard while tasks_modify is pending", async () => {
+    let resolveModify!: (value: unknown) => void;
+    const modify = new Promise((r) => {
+      resolveModify = r;
+    });
+    const view = projectPanel({
+      ...missing,
+      tasks_add: () => ({ task: task(A, "New thing", "pending", 7) }),
+      tasks_modify: () => modify,
+    });
+    const input = await openAdd(view);
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() =>
+      expect(view.inspection.rpcCalls.some((c) => c.method === "tasks_modify")).toBe(true),
+    );
+    expect(input.disabled).toBe(true);
+    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(view.getByRole("button", { name: /^add$/i }));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(view.inspection.rpcCalls.filter((c) => c.method === "tasks_add")).toHaveLength(1);
+    resolveModify({ ok: true, task: null });
+    await waitFor(() => expect(view.queryByLabelText(/new task description/i)).toBeNull());
+    expect(view.inspection.rpcCalls.filter((c) => c.method === "tasks_add")).toHaveLength(1);
+  });
+
   it("does not show the old project's rows under a newly linked project", async () => {
     let resolveWork!: (value: unknown) => void;
     const work = new Promise((r) => {

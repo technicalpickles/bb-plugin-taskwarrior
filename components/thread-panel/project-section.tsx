@@ -59,14 +59,15 @@ function AddTask({ project, onAdded }: { project: string; onAdded(): void }) {
   const { busy, add } = useAddTask();
 
   async function submit() {
-    const result = await add(description);
+    const result = await add(description, async (added) => {
+      try {
+        const { ok } = await rpc.call("tasks_modify", { id: added.id, project });
+        if (!ok) toast.error("Task added, but could not set its project");
+      } catch {
+        toast.error("Task added, but could not set its project");
+      }
+    });
     if (result.status !== "added") return;
-    try {
-      const { ok } = await rpc.call("tasks_modify", { id: result.task.id, project });
-      if (!ok) toast.error("Task added, but could not set its project");
-    } catch {
-      toast.error("Task added, but could not set its project");
-    }
     setDescription("");
     setOpen(false);
     onAdded();
