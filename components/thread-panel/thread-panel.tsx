@@ -10,6 +10,7 @@ import { ProjectSection } from "./project-section";
 import { PinnedSection } from "./pinned-section";
 import { RecentSection } from "./recent-section";
 import { SearchResults } from "./search-results";
+import { useAddTask } from "./use-add-task";
 import { useTasksByUuid } from "./use-tasks-by-uuid";
 import { useThreadState } from "./use-thread-state";
 
@@ -19,31 +20,14 @@ export interface ThreadPanelParams {
 }
 
 function AddTaskForm() {
-  const rpc = useRpc<typeof rpcContract>();
   const [description, setDescription] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, add } = useAddTask();
 
   async function submit() {
-    const trimmed = description.trim();
-    if (trimmed === "" || busy) return;
-    setBusy(true);
-    try {
-      let added: TaskRecord | null;
-      try {
-        ({ task: added } = await rpc.call("tasks_add", { description: trimmed }));
-      } catch {
-        toast.error("Could not add the task");
-        return;
-      }
-      if (added === null) {
-        toast.error("Task was added but could not be read back");
-        return;
-      }
-      setDescription("");
-      toast.success("Task added");
-    } finally {
-      setBusy(false);
-    }
+    const result = await add(description);
+    if (result.status !== "added") return;
+    setDescription("");
+    toast.success("Task added");
   }
 
   return (
@@ -121,6 +105,7 @@ export function ThreadPanel({
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Search tasks"
             aria-label="Search tasks"
+            autoFocus={params?.query !== undefined || params?.mode === "pin"}
             onKeyDown={(event) => {
               if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
               const trimmed = query.trim();

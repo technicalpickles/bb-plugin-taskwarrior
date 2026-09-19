@@ -14,6 +14,7 @@ import {
   type ProjectStatus,
 } from "../../lib/project-link";
 import { CompactTaskRow } from "./compact-task-row";
+import { useAddTask } from "./use-add-task";
 import { useProjectLink } from "./use-project-link";
 
 export interface ProjectActions {
@@ -55,36 +56,20 @@ function AddTask({ project, onAdded }: { project: string; onAdded(): void }) {
   const rpc = useRpc<typeof rpcContract>();
   const [open, setOpen] = useState(false);
   const [description, setDescription] = useState("");
-  const [busy, setBusy] = useState(false);
+  const { busy, add } = useAddTask();
 
   async function submit() {
-    const trimmed = description.trim();
-    if (trimmed === "" || busy) return;
-    setBusy(true);
+    const result = await add(description);
+    if (result.status !== "added") return;
     try {
-      let added: TaskRecord | null;
-      try {
-        ({ task: added } = await rpc.call("tasks_add", { description: trimmed }));
-      } catch {
-        toast.error("Could not add the task");
-        return;
-      }
-      if (added === null) {
-        toast.error("Task was added but could not be read back");
-        return;
-      }
-      try {
-        const { ok } = await rpc.call("tasks_modify", { id: added.id, project });
-        if (!ok) toast.error("Task added, but could not set its project");
-      } catch {
-        toast.error("Task added, but could not set its project");
-      }
-      setDescription("");
-      setOpen(false);
-      onAdded();
-    } finally {
-      setBusy(false);
+      const { ok } = await rpc.call("tasks_modify", { id: result.task.id, project });
+      if (!ok) toast.error("Task added, but could not set its project");
+    } catch {
+      toast.error("Task added, but could not set its project");
     }
+    setDescription("");
+    setOpen(false);
+    onAdded();
   }
 
   if (!open) {

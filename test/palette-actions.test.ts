@@ -61,3 +61,12 @@ describe("palette rows", () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 });
+
+describe("palette wiring", () => {
+  it("PALETTE_PANEL_ACTION_ID matches the thread panel action registered in app.tsx", async () => {
+    const { loadPluginApp } = await import("@get-bb/plugin-sdk/testing/app");
+    const { PALETTE_PANEL_ACTION_ID } = await import("../lib/palette-actions");
+    const captured = await loadPluginApp(() => import("../app"));
+    expect(captured.threadPanelActions[0].id).toBe(PALETTE_PANEL_ACTION_ID);
+  });
+});

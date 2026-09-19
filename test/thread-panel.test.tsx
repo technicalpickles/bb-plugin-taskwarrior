@@ -653,3 +653,37 @@ describe("ThreadPanel modes", () => {
     expect(view.inspection.rpcCalls.some((c) => c.method === "tasks_add")).toBe(false);
   });
 });
+
+describe("ThreadPanel search focus and add guard", () => {
+  const empty = { state: { pins: [], recent: [], searches: [] } };
+
+  it("focuses the search box when launched with a query param", async () => {
+    const view = panel({ thread_get: () => empty, tasks_list: () => ({ tasks: [] }) }, { query: "" });
+    const input = await view.findByLabelText("Search tasks");
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("does not focus the search box without params", async () => {
+    const view = panel({ thread_get: () => empty, tasks_list: () => ({ tasks: [] }) }, null);
+    const input = await view.findByLabelText("Search tasks");
+    expect(document.activeElement).not.toBe(input);
+  });
+
+  it("add mode ignores a second submit while tasks_add is pending", async () => {
+    let resolve!: (value: unknown) => void;
+    const pending = new Promise((r) => {
+      resolve = r;
+    });
+    const view = panel({ thread_get: () => empty, tasks_add: () => pending }, { mode: "add" });
+    const input = await view.findByLabelText("New task description");
+    fireEvent.change(input, { target: { value: "Once" } });
+    fireEvent.submit(input.closest("form")!);
+    await waitFor(() =>
+      expect(view.inspection.rpcCalls.filter((c) => c.method === "tasks_add")).toHaveLength(1),
+    );
+    fireEvent.submit(input.closest("form")!);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(view.inspection.rpcCalls.filter((c) => c.method === "tasks_add")).toHaveLength(1);
+    resolve({ task: task(A, "Once") });
+  });
+});
