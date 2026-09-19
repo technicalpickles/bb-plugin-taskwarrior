@@ -7,8 +7,9 @@ import { ThreadPanel } from "../components/thread-panel/thread-panel";
 const A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 
-const task = (uuid: string, description: string, status = "pending") => ({
-  id: 1,
+// Like real Taskwarrior data: finished tasks export id 0.
+const task = (uuid: string, description: string, status = "pending", id = 1) => ({
+  id: status === "pending" ? id : 0,
   uuid,
   description,
   status,
@@ -28,7 +29,7 @@ describe("ThreadPanel pinned section", () => {
   it("renders pinned tasks in order and strikes through finished ones", async () => {
     const view = panel({
       thread_get: () => ({ state: baseState }),
-      tasks_list: () => ({ tasks: [task(A, "Write plan"), task(B, "Ship it", "completed")] }),
+      tasks_list: () => ({ tasks: [task(A, "Write plan"), task(B, "Ship it", "completed", 2)] }),
     });
     await waitFor(() => view.getByText("Write plan"));
     expect(view.getByText("Ship it").className).toMatch(/line-through/);
@@ -59,7 +60,7 @@ describe("ThreadPanel pinned section", () => {
   it("move down reorders pins", async () => {
     const view = panel({
       thread_get: () => ({ state: baseState }),
-      tasks_list: () => ({ tasks: [task(A, "Write plan"), task(B, "Ship it")] }),
+      tasks_list: () => ({ tasks: [task(A, "Write plan"), task(B, "Ship it", "pending", 2)] }),
       thread_reorder_pins: () => ({ state: { ...baseState, pins: [B, A] } }),
     });
     await waitFor(() => view.getByText("Write plan"));
@@ -67,6 +68,65 @@ describe("ThreadPanel pinned section", () => {
     await waitFor(() => {
       const call = view.inspection.rpcCalls.find((c) => c.method === "thread_reorder_pins");
       expect((call?.input as any).order).toEqual([B, A]);
+    });
+  });
+
+  it("does not open a completed pin (id 0)", async () => {
+    const view = panel({
+      thread_get: () => ({ state: { ...baseState, pins: [B] } }),
+      tasks_list: () => ({ tasks: [task(B, "Ship it", "completed", 2)] }),
+      tasks_get: () => ({ task: null }),
+    });
+    await waitFor(() => view.getByText("Ship it"));
+    const button = view.getByText("Ship it").closest("button") as HTMLButtonElement;
+    expect(button.disabled).toBe(true);
+    fireEvent.click(button);
+    expect(view.inspection.rpcCalls.some((c) => c.method === "tasks_get")).toBe(false);
+  });
+
+  it("opens a pending pin by its id", async () => {
+    const view = panel({
+      thread_get: () => ({ state: { ...baseState, pins: [A, B] } }),
+      tasks_list: () => ({ tasks: [task(A, "Write plan"), task(B, "Ship it", "pending", 2)] }),
+      tasks_get: () => ({ task: null }),
+      thread_record_view: () => ({}),
+    });
+    await waitFor(() => view.getByText("Ship it"));
+    fireEvent.click(view.getByText("Ship it"));
+    await waitFor(() => {
+      const call = view.inspection.rpcCalls.find((c) => c.method === "tasks_get");
+      expect((call?.input as any).id).toBe(2);
+    });
+  });
+
+  it("does not flash 'no longer exists' before tasks_list resolves", async () => {
+    let resolve!: (value: unknown) => void;
+    const pending = new Promise((r) => {
+      resolve = r;
+    });
+    const view = panel({
+      thread_get: () => ({ state: { ...baseState, pins: [A] } }),
+      tasks_list: () => pending,
+    });
+    await waitFor(() =>
+      expect(view.inspection.rpcCalls.some((c) => c.method === "tasks_list")).toBe(true),
+    );
+    expect(view.queryByText(/no longer exists/i)).toBeNull();
+    resolve({ tasks: [] });
+    await waitFor(() => view.getByText(/no longer exists/i));
+  });
+
+  it("clear on an unresolved pin calls thread_unpin", async () => {
+    const view = panel({
+      thread_get: () => ({ state: { ...baseState, pins: [A] } }),
+      tasks_list: () => ({ tasks: [] }),
+      thread_unpin: () => ({ state: { ...baseState, pins: [] } }),
+    });
+    await waitFor(() => view.getByText(/no longer exists/i));
+    fireEvent.click(view.getByLabelText(/clear/i));
+    await waitFor(() => {
+      const call = view.inspection.rpcCalls.find((c) => c.method === "thread_unpin");
+      expect(call?.input).toEqual({ threadId: "t1", uuid: A });
     });
   });
 });

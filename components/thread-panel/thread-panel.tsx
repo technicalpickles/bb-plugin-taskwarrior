@@ -64,7 +64,7 @@ export function ThreadPanel({
         <h3 className="px-3 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
           Pinned
         </h3>
-        {thread.state !== null && (
+        {thread.state !== null && tasks !== null && (
           <PinnedSection
             threadId={threadId}
             state={thread.state}

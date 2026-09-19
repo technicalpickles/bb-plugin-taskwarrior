@@ -58,12 +58,15 @@ export function CompactTaskRow(props: CompactTaskRowProps) {
     );
   }
   const finished = task.status === "completed" || task.status === "deleted";
+  // Finished tasks export id 0, which can't be opened by integer id.
+  const openable = props.onOpen !== undefined && task.id > 0;
   return (
     <div className="@container flex items-center gap-1 px-3 py-2">
       <button
         type="button"
-        onClick={props.onOpen}
-        className="flex min-w-0 flex-1 flex-col items-start gap-0.5 text-left"
+        onClick={openable ? props.onOpen : undefined}
+        disabled={!openable}
+        className="flex min-w-0 flex-1 flex-col items-start gap-0.5 text-left disabled:cursor-default"
       >
         <span
           className={cn(
