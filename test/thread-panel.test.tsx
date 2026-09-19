@@ -578,3 +578,78 @@ describe("ThreadPanel project section fix round 1", () => {
     expect(view.queryByText("Home task")).toBeNull();
   });
 });
+
+describe("ThreadPanel modes", () => {
+  const empty = { state: { pins: [], recent: [], searches: [] } };
+
+  it("pin mode shows search results with a Pin action", async () => {
+    const view = panel(
+      {
+        thread_get: () => empty,
+        tasks_list: () => ({ tasks: [task(A, "Pickable")] }),
+        thread_pin: () => ({ state: { pins: [A], recent: [], searches: [] } }),
+      },
+      { mode: "pin" },
+    );
+    await waitFor(() => view.getByText("Pickable"));
+    fireEvent.click(view.getByLabelText(/^pin$/i));
+    await waitFor(() =>
+      expect(view.inspection.rpcCalls.some((c) => c.method === "thread_pin")).toBe(true),
+    );
+  });
+
+  it("add mode shows an add form that calls tasks_add", async () => {
+    const view = panel(
+      { thread_get: () => empty, tasks_add: () => ({ task: task(A, "New") }) },
+      { mode: "add" },
+    );
+    const input = (await view.findByLabelText("New task description")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "New" } });
+    fireEvent.submit(input.closest("form")!);
+    await waitFor(() =>
+      expect(view.inspection.rpcCalls.find((c) => c.method === "tasks_add")?.input).toEqual({
+        description: "New",
+      }),
+    );
+    await waitFor(() => expect(input.value).toBe(""));
+    expect(toast.success).toHaveBeenCalledWith("Task added");
+  });
+
+  it("add mode keeps the input and toasts when tasks_add rejects", async () => {
+    const view = panel(
+      {
+        thread_get: () => empty,
+        tasks_add: () => {
+          throw new Error("boom");
+        },
+      },
+      { mode: "add" },
+    );
+    const input = (await view.findByLabelText("New task description")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Keep me" } });
+    fireEvent.submit(input.closest("form")!);
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(input.value).toBe("Keep me");
+  });
+
+  it("add mode keeps the input when tasks_add returns no task", async () => {
+    const view = panel(
+      { thread_get: () => empty, tasks_add: () => ({ task: null }) },
+      { mode: "add" },
+    );
+    const input = (await view.findByLabelText("New task description")) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Keep me" } });
+    fireEvent.submit(input.closest("form")!);
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(input.value).toBe("Keep me");
+  });
+
+  it("add mode ignores a blank description", async () => {
+    const view = panel({ thread_get: () => empty, tasks_add: () => ({ task: null }) }, { mode: "add" });
+    const input = await view.findByLabelText("New task description");
+    fireEvent.change(input, { target: { value: "   " } });
+    fireEvent.submit(input.closest("form")!);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(view.inspection.rpcCalls.some((c) => c.method === "tasks_add")).toBe(false);
+  });
+});

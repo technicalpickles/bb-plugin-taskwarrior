@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { rpcContract, type TaskRecord } from "../../contract";
 import { TaskDetail } from "@/components/tasks/task-detail";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ProjectSection } from "./project-section";
 import { PinnedSection } from "./pinned-section";
@@ -14,7 +15,56 @@ import { useThreadState } from "./use-thread-state";
 
 export interface ThreadPanelParams {
   query?: string;
-  mode?: "pin";
+  mode?: "pin" | "add";
+}
+
+function AddTaskForm() {
+  const rpc = useRpc<typeof rpcContract>();
+  const [description, setDescription] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit() {
+    const trimmed = description.trim();
+    if (trimmed === "" || busy) return;
+    setBusy(true);
+    try {
+      let added: TaskRecord | null;
+      try {
+        ({ task: added } = await rpc.call("tasks_add", { description: trimmed }));
+      } catch {
+        toast.error("Could not add the task");
+        return;
+      }
+      if (added === null) {
+        toast.error("Task was added but could not be read back");
+        return;
+      }
+      setDescription("");
+      toast.success("Task added");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form
+      className="flex gap-2 p-3 pb-0"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      <Input
+        value={description}
+        onChange={(event) => setDescription(event.target.value)}
+        placeholder="New task"
+        aria-label="New task description"
+      />
+      <Button type="submit" size="sm" disabled={busy}>
+        Add
+      </Button>
+    </form>
+  );
 }
 
 export function ThreadPanel({
@@ -64,6 +114,7 @@ export function ThreadPanel({
   return (
     <TooltipProvider>
       <div className="flex h-full flex-col overflow-y-auto">
+        {params?.mode === "add" && <AddTaskForm />}
         <div className="p-3">
           <Input
             value={query}
@@ -77,7 +128,7 @@ export function ThreadPanel({
             }}
           />
         </div>
-        {query.trim() !== "" ? (
+        {query.trim() !== "" || params?.mode === "pin" ? (
           <SearchResults
             query={query}
             pinnedUuids={pins}
